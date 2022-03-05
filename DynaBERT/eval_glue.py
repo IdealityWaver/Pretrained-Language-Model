@@ -158,6 +158,7 @@ def evaluate(args, model, tokenizer, prefix=""):
     eval_task_names = ("mnli", "mnli-mm") if args.task_name == "mnli" else (args.task_name,)
 
     results = {}
+    #torch.set_num_threads(6)
     for eval_task in eval_task_names:
         eval_dataset = load_and_cache_examples(args, eval_task, tokenizer, evaluate=True)
 
@@ -179,6 +180,10 @@ def evaluate(args, model, tokenizer, prefix=""):
         nb_eval_steps = 0
         preds = None
         out_label_ids = None
+        max_eval_count = 9999
+        count = 0
+        # lwg: measure time
+        import time 
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             model.eval()
             batch = tuple(t.to(args.device) for t in batch)
@@ -190,11 +195,35 @@ def evaluate(args, model, tokenizer, prefix=""):
                 if args.model_type != 'distilbert':
                     inputs['token_type_ids'] = batch[2] if args.model_type in ['bert', 'xlnet'] else None  # XLM, DistilBERT and RoBERTa don't use segment_ids
                 # the following print function is to output original sentence for the visualization, wrt. batch_size=1
-                print(tokenizer.decode(inputs['input_ids'][0].cpu().numpy()))
+                text = tokenizer.decode(inputs['input_ids'][0].cpu().numpy(), skip_special_tokens=True)
+                n_tokens = np.count_nonzero(inputs['input_ids'][0].cpu().numpy())
+                #print(text)
+                #print(tokenizer.decode(inputs['input_ids'][0].cpu().numpy()))
+                # lwg: torchprof...
+                #paths = [('BertForSequenceClassification', 'bert', 'encoder', 'layer', '0', 'attention')]
+                #with torchprof.Profile(model, use_cuda=False, paths=paths) as prof:
+                '''
+                import torchprof 
+                with torchprof.Profile(model, use_cuda=False) as prof:
+                    start = time.time()
+                    outputs = model(**inputs)
+                    end = time.time()
+                #print(prof.display(show_events=True))
+                #print(prof.display(show_events=False))
+                '''
+                start = time.time()
                 outputs = model(**inputs)
+                end = time.time()
+                print("%d,%.3f" % (n_tokens, (end-start) * 1000))
                 tmp_eval_loss, logits = outputs[:2]
 
                 eval_loss += tmp_eval_loss.mean().item()
+
+                # lwg: terminate automatically 
+                count += 1
+                if count >= max_eval_count:
+                    break
+
             nb_eval_steps += 1
             if preds is None:
                 preds = logits.detach().cpu().numpy()
@@ -349,6 +378,87 @@ def main():
     tokenizer = tokenizer_class.from_pretrained(args.model_dir, do_lower_case=args.do_lower_case)
     model = model_class.from_pretrained(args.model_dir, config=config)
     model.to(args.device)
+    
+    # lwg: XXX dirty 
+    def linear_quantize(model, bits=7):
+        from sklearn.cluster import KMeans
+        from sklearn.mixture import GaussianMixture
+        weights = None
+        # get weights in a large flat array
+        for name, param in model.named_parameters():
+            # lwg: this is layerwise quantization
+            if param.requires_grad:
+                '''
+                if "encoder" not in name:
+                    continue
+                '''
+                print(name)
+                print("before: ", param.size())
+                # lwg: set to zero
+                #param.data = torch.zeros(param.size())
+                if weights == None:
+                    weights = torch.flatten(param.data)
+                else:
+                    new = torch.flatten(param.data)
+                    weights  = torch.cat([weights, new])
+        '''
+        # find outliers
+        weights = weights.reshape(-1, 1)
+        print(weights.size())
+        gm = GaussianMixture(n_components=1, random_state=0).fit(weights)
+        scores = gm.score_samples(weights)
+        outliers_idx = []
+        outliers = set()
+        weights = weights.numpy()
+        for i in range(0, len(scores)):
+            if scores[i] < -4:
+                outliers_idx.append(i)
+                outliers.add(weights[i][0])
+        outliers_idx = np.array(outliers_idx, dtype=int)
+        weights = np.delete(weights, outliers_idx)
+
+        print("deleted: ", len(outliers))
+        print("G group: ", len(weights))
+        '''
+
+        # linear quantization
+        weights = np.sort(weights)
+        print(weights[0], weights[len(weights)-1])
+        bins = []
+        n_bins = pow(2, bits)
+        step = int(len(weights)/n_bins)
+        centroids = []
+        bins.append(-10.0000)
+        for i in range(n_bins):
+            start =  i * step
+            centroids.append(np.average(weights[start : start + step]))
+            bins.append(weights[start])
+        bins = np.array(bins)
+        centroids = np.array(centroids)
+        print(bins)
+        print(centroids)
+        # substitute original weights
+        for name, param in model.named_parameters():
+            # lwg: this is layerwise 
+            if param.requires_grad:
+                print(name)
+                old_size = param.data.size()
+                param.data = torch.flatten(param.data)
+                tmp = np.digitize(param.data, bins) - 1
+                param.data = torch.from_numpy(centroids[tmp])
+                param.data = param.data.view(old_size)
+                print("old size: ", old_size, " new size:", param.data.size())
+                print(param.data)
+
+
+
+        # lwg: below too slow 
+        #kmeans = KMeans(n_clusters=16, random_state=0, tol=1e-8).fit(weights.reshape(-1, 1))
+        #print(kmeans.cluster_centers_)
+        #print(weights.size())
+
+    linear_quantize(model)
+    #model.bert.quantize()
     model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
     model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
     results = evaluate(args, model, tokenizer)

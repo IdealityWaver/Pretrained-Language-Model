@@ -56,6 +56,85 @@ BERT_PRETRAINED_MODEL_ARCHIVE_MAP = {
 }
 
 
+def detect_outliers(weights):
+    # find outliers
+    weights = weights.reshape(-1, 1)
+    print(weights.size())
+    gm = GaussianMixture(n_components=1, random_state=0).fit(weights)
+    scores = gm.score_samples(weights)
+    outliers_idx = []
+    outliers = set()
+    weights = weights.numpy()
+    for i in range(0, len(scores)):
+        if scores[i] < -4:
+            outliers_idx.append(i)
+            outliers.add(weights[i][0])
+    outliers_idx = np.array(outliers_idx, dtype=int)
+    weights = np.delete(weights, outliers_idx)
+
+    print("deleted: ", len(outliers))
+    print("G group: ", len(weights))
+
+# lwg: linear quantization utility
+# data: all weights of a Bert layer, in torch Tensor format
+# bits: decides # of bins = 2^bits
+# XXX: incorrect impl... 
+def linear_quantize_one_layer(layer, bits=6):
+    import numpy as np
+    # gather all weights from a layer
+    weights = torch.Tensor([]) 
+    for name, param in layer.named_parameters():
+        if param.requires_grad:
+            weights = torch.cat([weights, torch.flatten(param.data)])
+    weights = np.sort(weights)
+    bins = []
+    n_bins = pow(2, bits)
+    step = int(len(weights)/n_bins)
+    centroids = []
+    # get centroids
+    for i in range(n_bins):
+        start = i * step
+        centroids.append(np.average(weights[start: start + step]))
+        bins.append(weights[start])
+    bins.append(weights[-1])
+    bins = np.array(bins)
+    print(bins)
+    centroids = np.array(centroids)
+
+    # quantize by centroids 
+    for name, param in layer.named_parameters():
+        if param.requires_grad:
+            data = param.data
+            #print("before:")
+            #print(data)
+            old_size = data.size()
+            quantized = np.digitize(data, bins, right=True)-1 # return the idx of the centroids
+            data = torch.from_numpy(centroids[quantized])
+            data = data.view(old_size)
+            #data = torch.zeros(old_size)
+            param.data = data
+            #print("after:")
+            #print(data)
+
+def kmeans_quantize_one_layer(layer, bits):
+    import numpy as np
+    from sklearn.cluster import KMeans
+    # gather all weights from a layer
+    weights = torch.Tensor([]) 
+    for name, param in layer.named_parameters():
+        if param.requires_grad:
+            weights = torch.cat([weights, torch.flatten(param.data)])
+    weights = weights.reshape(-1, 1)
+    km = KMeans(n_clusters=pow(2, bits), random_state=0, tol=1e-4).fit(weights)
+    print(km.labels_)
+    print(km.cluster_centers_)
+    for name, param in layer.named_parameters():
+        if param.requires_grad:
+            labels = km.predict(param.data)
+            new_param = km.cluster_centers_[labels]
+            print(new_param)
+            param.data = torch.from_numpy(new_param)
+    
 def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
     """ Load tf checkpoints in a pytorch model.
     """
@@ -413,6 +492,12 @@ class BertEncoder(nn.Module):
         self.output_intermediate = config.output_intermediate
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.depth_mult = 1.
+
+    def quantize(self):
+        for i in range(len(self.layer)):
+            print("quantizing ", i)
+            #linear_quantize_one_layer(self.layer[i])
+            kmeans_quantize_one_layer(self.layer[i], 3)
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
         all_hidden_states = ()

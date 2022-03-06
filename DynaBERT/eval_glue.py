@@ -380,15 +380,16 @@ def main():
     model.to(args.device)
     
     # lwg: XXX dirty 
+    # lwg: layerwise quantization where each layer has 2^bins representative values
     def linear_quantize(model, bits=7):
         from sklearn.cluster import KMeans
         from sklearn.mixture import GaussianMixture
         weights = None
-        # get weights in a large flat array
         for name, param in model.named_parameters():
             # lwg: this is layerwise quantization
             if param.requires_grad:
                 '''
+                # lwg: if we want to do only BERT layer 
                 if "encoder" not in name:
                     continue
                 '''
@@ -396,11 +397,38 @@ def main():
                 print("before: ", param.size())
                 # lwg: set to zero
                 #param.data = torch.zeros(param.size())
+                weights = torch.flatten(param.data)
+                # linear quantization
+                weights = np.sort(weights)
+                print(weights[0], weights[len(weights)-1])
+                bins = []
+                n_bins = pow(2, bits)
+                step = int(len(weights)/n_bins)
+                centroids = []
+                # lower bound
+                bins.append(-10.0000)
+                for i in range(n_bins):
+                    start =  i * step
+                    centroids.append(np.average(weights[start : start + step]))
+                    bins.append(weights[start])
+                bins = np.array(bins)
+                centroids = np.array(centroids)
+                print(bins)
+                print(centroids)
+                tmp = np.digitize(param.data, bins) - 1
+                for t in tmp:
+                    print(t)
+                print(tmp)
+                param.data = torch.from_numpy(centroids[tmp])
+                param.data = param.data.view(old_size)
+
+                '''
                 if weights == None:
                     weights = torch.flatten(param.data)
                 else:
                     new = torch.flatten(param.data)
                     weights  = torch.cat([weights, new])
+                '''
         '''
         # find outliers
         weights = weights.reshape(-1, 1)
@@ -421,22 +449,6 @@ def main():
         print("G group: ", len(weights))
         '''
 
-        # linear quantization
-        weights = np.sort(weights)
-        print(weights[0], weights[len(weights)-1])
-        bins = []
-        n_bins = pow(2, bits)
-        step = int(len(weights)/n_bins)
-        centroids = []
-        bins.append(-10.0000)
-        for i in range(n_bins):
-            start =  i * step
-            centroids.append(np.average(weights[start : start + step]))
-            bins.append(weights[start])
-        bins = np.array(bins)
-        centroids = np.array(centroids)
-        print(bins)
-        print(centroids)
         # substitute original weights
         for name, param in model.named_parameters():
             # lwg: this is layerwise 
@@ -450,17 +462,17 @@ def main():
                 print("old size: ", old_size, " new size:", param.data.size())
                 print(param.data)
 
-
-
         # lwg: below too slow 
         #kmeans = KMeans(n_clusters=16, random_state=0, tol=1e-8).fit(weights.reshape(-1, 1))
         #print(kmeans.cluster_centers_)
         #print(weights.size())
 
-    linear_quantize(model)
+    #linear_quantize(model)
     #model.bert.quantize()
+    model.bert.encoder.quantize()
     model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
     model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
+
     results = evaluate(args, model, tokenizer)
     print(results)
 

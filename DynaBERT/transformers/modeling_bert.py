@@ -622,12 +622,12 @@ class BertEncoder(nn.Module):
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.depth_mult = 1.
 
-    def quantize(self):
+    def quantize(self, bits):
         for i in range(len(self.layer)):
             print("quantizing ", i)
             #gobo_quantize_one_layer(self.layer[i], 6)
             #kmeans_quantize_one_layer(self.layer[i], 3)
-            _quantize(self.layer[i], gobo_quantize, True, 4)
+            _quantize(self.layer[i], gobo_quantize, True, bits)
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
         all_hidden_states = ()

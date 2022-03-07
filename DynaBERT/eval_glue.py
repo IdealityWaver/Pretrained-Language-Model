@@ -381,12 +381,14 @@ def main():
     model.to(args.device)
     
     #model.bert.quantize()
-    model.bert.encoder.quantize()
+    bits = 5
+    #model.bert.encoder.quantize(bits)
     model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
     model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
 
     results = evaluate(args, model, tokenizer)
     print(results)
+    print("quantizing to ", bits, " bits")
 
 
 if __name__ == "__main__":

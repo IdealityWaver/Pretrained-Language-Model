@@ -113,6 +113,7 @@ def gobo_quantize_one_layer(layer, bits=3):
         if param.requires_grad:
             old_size = param.data.size()
             data = torch.flatten(param.data)
+            orig = torch.flatten(param.data)
             # get idx and weights of outliers in this NN module
             outliers_idx = np.nonzero(np.in1d(data, outliers))
             outliers_weights = data[outliers_idx[0]]
@@ -122,9 +123,15 @@ def gobo_quantize_one_layer(layer, bits=3):
             data = torch.from_numpy(centroids[quantized]).float()
             # recover corresponding weights
             data[outliers_idx[0]] = outliers_weights 
-            for d in data:
-                if d > 20.0:
-                    print("????????????????????????????????????????????")
+            #print(outliers_weights)
+            #print(data[outliers_idx[0]]) 
+            #print(torch.flatten(param.data)[outliers_idx[0]])
+            for idx,d in enumerate(data):
+                if d < -100.0:
+                    print(idx, orig[idx],"??")
+                    # there are values that are not in outlier idx 
+                    if idx not in outliers_idx[0]:
+                        print("????")
             data = data.view(old_size)
             param.data = data
             print("after size:", param.data.size())
@@ -512,7 +519,7 @@ class BertEncoder(nn.Module):
     def quantize(self):
         for i in range(len(self.layer)):
             print("quantizing ", i)
-            gobo_quantize_one_layer(self.layer[i])
+            gobo_quantize_one_layer(self.layer[i], 4)
             #kmeans_quantize_one_layer(self.layer[i], 4)
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):

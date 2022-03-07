@@ -75,20 +75,62 @@ def detect_outliers(weights):
     print("masked: ", len(outliers))
     return np.array(outliers)
 
-# lwg: linear quantization utility
-# data: all weights of a Bert layer, in torch Tensor format
-# bits: decides # of bins = 2^bits
-# XXX: this is GOBO base without L1 Norm error minimization 
-# XXX: accuracy is really bad 
-def gobo_quantize_one_layer(layer, bits=3):
-    # gather all weights from a layer
+
+def gather_layer_weights(layer):
     weights = torch.Tensor([]) 
-    # keep the same as numpy print
-    torch.set_printoptions(precision=8)
     for name, param in layer.named_parameters():
         if param.requires_grad:
             weights = torch.cat([weights, torch.flatten(param.data)])
+    return weights
+
+
+def gobo_prepare_centroids(g_group, bits):
+    np.sort(g_group)
+    bins = []
+    n_bins = pow(2, bits)
+    step = int(len(g_group)/n_bins)
+    centroids = []
+    # calculate centroids in G group
+    for i in range(n_bins):
+        start = i * step
+        centroids.append(np.average(g_group[start: start + step]))
+        bins.append(g_group[start])
+    # boundary 
+    bins.append(g_group[-1])
+    centroids.append(-99999.0) 
+
+# lwg: unified quantization entry
+# layer: layer to be quantized
+# quantize_f: gobo/kmeans
+# detect_o: whether to detect outliers  
+# bits: quantizatio bits 
+# XXX:weird abstraction... 
+def _quantize(layer, quantize_f=(prepare_centroids, apply_centroids), detect_o=True, bits=3):
+    # keep the same as numpy print
+    torch.set_printoptions(precision=8)
+    weights = gather_layer_weights(layer)
+    if detect_o:
+        o_group = detect_outliers(weights)
+    else:
+        o_group = []
+    g_group = weights[np.nonzero(np.in1d(weights, o_group))]
+    centroids, bins = prepare_centroids(g_group)
+    for name, param in layer.named_parameters():
+        if param.requires_grad:
+            o_count += quantize_f(param.data, o_group, bits)
+
+
+# data: all weights of a Bert layer, in torch Tensor format
+# bits: decides # of bins = 2^bits
+# XXX: this is GOBO base without L1 Norm error minimization 
+# XXX: accuracy is really bad without outlier detection
+def gobo_quantize_one_layer(layer, bits=3):
+    # keep the same as numpy print
+    torch.set_printoptions(precision=8)
+    # gather all weights from a layer
+    weights = gather_layer_weights(layer)
     outliers = detect_outliers(weights)
+    #outliers = []
     print("torch weights:", weights)
     # tensor(-0.1389).numpy() gives -0.13887332 because torch print precision is 4 < 8 of numpy 
     # print(torch.flatten(weights)[199396].numpy())
@@ -114,7 +156,6 @@ def gobo_quantize_one_layer(layer, bits=3):
     centroids.append(-99999.0)
     centroids = np.array(centroids)
     print("centroids are: ", centroids)
-
     # quantize by centroids 
     o_count = 0
     for name, param in layer.named_parameters():
@@ -122,7 +163,7 @@ def gobo_quantize_one_layer(layer, bits=3):
             old_size = param.data.size()
             data = torch.flatten(param.data).numpy()
             orig = torch.flatten(param.data).numpy()
-            # get idx and weights of outliers in this NN module
+            # save idx and weights of outliers in this NN module
             outliers_idx = np.nonzero(np.in1d(data, outliers))
             outliers_weights = data[outliers_idx]
             o_count += len(outliers_weights)
@@ -162,10 +203,7 @@ def kmeans_quantize_one_layer(layer, bits):
     import numpy as np
     from sklearn.cluster import KMeans
     # gather all weights from a layer
-    weights = torch.Tensor([]) 
-    for name, param in layer.named_parameters():
-        if param.requires_grad:
-            weights = torch.cat([weights, torch.flatten(param.data)])
+    weights = gather_layer_weights(layer)
     outliers = detect_outliers(weights)
     weights = weights.numpy()
     masked_weights = np.ma.MaskedArray(weights, np.in1d(weights, outliers))
@@ -552,8 +590,8 @@ class BertEncoder(nn.Module):
     def quantize(self):
         for i in range(len(self.layer)):
             print("quantizing ", i)
-            #gobo_quantize_one_layer(self.layer[i], 4)
-            kmeans_quantize_one_layer(self.layer[i], 3)
+            gobo_quantize_one_layer(self.layer[i], 5)
+            #kmeans_quantize_one_layer(self.layer[i], 3)
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
         all_hidden_states = ()

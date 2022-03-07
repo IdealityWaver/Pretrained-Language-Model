@@ -61,31 +61,38 @@ def detect_outliers(weights):
     from sklearn.mixture import GaussianMixture 
     print("detecting outliers...")
     # find outliers
-    weights = weights.reshape(-1, 1)
-    print(weights.size())
-    gm = GaussianMixture(n_components=1, random_state=0).fit(weights)
-    scores = gm.score_samples(weights)
+    _weights = weights.reshape(-1, 1)
+    gm = GaussianMixture(n_components=1, random_state=0).fit(_weights)
+    scores = gm.score_samples(_weights)
     outliers = []
-    weights = weights.numpy()
+    _weights = _weights.numpy()
     for i in range(0, len(scores)):
-        if weights[i][0] == -0.1389:
-            print("found xxx @", i)
         if scores[i] <= -4.0:
-            outliers.append(weights[i][0])
+            outliers.append(_weights[i][0])
     print("masked: ", len(outliers))
-    return np.array(outliers)
+    mask = np.zeros(weights.shape, dtype=bool)
+    mask[np.where(scores <= -4.0)] = True
+    return np.array(outliers), mask 
 
 
 def gather_layer_weights(layer):
     weights = torch.Tensor([]) 
+    # original dimension and pointer address to restore to
+    orig = []
     for name, param in layer.named_parameters():
         if param.requires_grad:
+            orig.append(param)
             weights = torch.cat([weights, torch.flatten(param.data)])
-    return weights
+    return weights, orig 
 
 
-def gobo_prepare_centroids(g_group, bits):
-    np.sort(g_group)
+# lwg: gobo implementation 
+# returns quantized matrix
+def gobo_quantize(weights, o_idx, bits):
+    print("gobo qunatization. Bits = ", bits)
+    g_group = weights[~o_idx]
+    g_group = np.sort(g_group)
+    print(g_group)
     bins = []
     n_bins = pow(2, bits)
     step = int(len(g_group)/n_bins)
@@ -98,38 +105,65 @@ def gobo_prepare_centroids(g_group, bits):
     # boundary 
     bins.append(g_group[-1])
     centroids.append(-99999.0) 
+    centroids = np.array(centroids)
+    # assign quantized values
+    quantized = np.digitize(weights, bins, right = True) - 1 # return the idx of the centroids
+    new_weights = centroids[quantized]
+    # recover corresponding weights
+    new_weights[o_idx] = weights[o_idx]
+    # sanity check manually patch some values...
+    for idx,d in enumerate(new_weights):
+        if d < -100.0:
+            print(idx, weights[idx],"fail to be binned??")
+            # there are values that are not in outlier idx 
+            if idx not in o_idx:
+                new_weights[idx] = centroids[0]
+                print("manually patch", weights[idx], "to", centroids[0])
+    return new_weights
 
 # lwg: unified quantization entry
 # layer: layer to be quantized
-# quantize_f: gobo/kmeans
+# quantize_f: gobo/kmeans, returns quantized new weights 
 # detect_o: whether to detect outliers  
 # bits: quantizatio bits 
-# XXX:weird abstraction... 
-def _quantize(layer, quantize_f=(prepare_centroids, apply_centroids), detect_o=True, bits=3):
+def _quantize(layer, quantize_f, detect_o=True, bits=3):
     # keep the same as numpy print
     torch.set_printoptions(precision=8)
-    weights = gather_layer_weights(layer)
+    weights, orig_param = gather_layer_weights(layer)
     if detect_o:
-        o_group = detect_outliers(weights)
+        o_group, o_idx = detect_outliers(weights)
     else:
-        o_group = []
-    g_group = weights[np.nonzero(np.in1d(weights, o_group))]
-    centroids, bins = prepare_centroids(g_group)
+        o_idx = []
+    new_weights = quantize_f(weights, o_idx, bits)
+    # restore to original NN module
+    for src in orig_param:
+        size = src.data.size()
+        length = src.data.nelement()
+        orig = new_weights[:length]
+        new_weights = new_weights[length:]
+        src.data = torch.from_numpy(orig).float().view(size)
+    o_count = 0
+    # sanity check, all outliers must be preserved 
     for name, param in layer.named_parameters():
         if param.requires_grad:
-            o_count += quantize_f(param.data, o_group, bits)
+            o_count += len(np.nonzero(np.in1d(param.data.flatten(), o_group))[0])
+    print("patched ", o_count)
+    assert o_count == len(o_group)
+    return
 
 
 # data: all weights of a Bert layer, in torch Tensor format
 # bits: decides # of bins = 2^bits
 # XXX: this is GOBO base without L1 Norm error minimization 
 # XXX: accuracy is really bad without outlier detection
+# XXX: bewlow obsolete -- look at _quantize
 def gobo_quantize_one_layer(layer, bits=3):
     # keep the same as numpy print
     torch.set_printoptions(precision=8)
     # gather all weights from a layer
-    weights = gather_layer_weights(layer)
-    outliers = detect_outliers(weights)
+    weights, ctx = gather_layer_weights(layer)
+    print(ctx)
+    outliers, _ = detect_outliers(weights)
     #outliers = []
     print("torch weights:", weights)
     # tensor(-0.1389).numpy() gives -0.13887332 because torch print precision is 4 < 8 of numpy 
@@ -199,12 +233,13 @@ def gobo_quantize_one_layer(layer, bits=3):
 
 
 # lwg:to mearge w/ gobo
+# XXX: bewlow obsolete -- look at _quantize
 def kmeans_quantize_one_layer(layer, bits):
     import numpy as np
     from sklearn.cluster import KMeans
     # gather all weights from a layer
-    weights = gather_layer_weights(layer)
-    outliers = detect_outliers(weights)
+    weights, _ = gather_layer_weights(layer)
+    outliers, _ = detect_outliers(weights)
     weights = weights.numpy()
     masked_weights = np.ma.MaskedArray(weights, np.in1d(weights, outliers))
     g_group = torch.from_numpy(masked_weights[~masked_weights.mask].reshape(-1, 1))
@@ -590,8 +625,9 @@ class BertEncoder(nn.Module):
     def quantize(self):
         for i in range(len(self.layer)):
             print("quantizing ", i)
-            gobo_quantize_one_layer(self.layer[i], 5)
+            #gobo_quantize_one_layer(self.layer[i], 6)
             #kmeans_quantize_one_layer(self.layer[i], 3)
+            _quantize(self.layer[i], gobo_quantize, True, 4)
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
         all_hidden_states = ()

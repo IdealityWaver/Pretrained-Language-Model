@@ -189,7 +189,7 @@ def kmeans_quantize_one_layer(layer, bits):
             idx = outliers_idx[0].flatten()
             new_param[idx] = outliers_weights
             param.data = torch.from_numpy(new_param).float().view(old_size)
-            print(param.data)
+            print(param.data.size())
     
 def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
     """ Load tf checkpoints in a pytorch model.
@@ -553,7 +553,7 @@ class BertEncoder(nn.Module):
         for i in range(len(self.layer)):
             print("quantizing ", i)
             #gobo_quantize_one_layer(self.layer[i], 4)
-            kmeans_quantize_one_layer(self.layer[i], 1)
+            kmeans_quantize_one_layer(self.layer[i], 3)
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
         all_hidden_states = ()

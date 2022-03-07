@@ -182,7 +182,7 @@ def kmeans_quantize_one_layer(layer, bits):
             outliers_weights = data[outliers_idx]
             labels = km.predict(param.data)
             new_param = km.cluster_centers_[labels]
-            new_param[outlier_idx] = outliers_weights
+            new_param[outliers_idx] = outliers_weights
             param.data = torch.from_numpy(new_param).float().view(old_size)
             print(param.data)
     

@@ -31,6 +31,7 @@ sys.path.append("..")
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
+import numpy as np
 
 from .modeling_utils import PreTrainedModel
 from .configuration_bert import BertConfig
@@ -57,62 +58,77 @@ BERT_PRETRAINED_MODEL_ARCHIVE_MAP = {
 
 
 def detect_outliers(weights):
+    from sklearn.mixture import GaussianMixture 
     print("detecting outliers...")
     # find outliers
     weights = weights.reshape(-1, 1)
     print(weights.size())
     gm = GaussianMixture(n_components=1, random_state=0).fit(weights)
     scores = gm.score_samples(weights)
-    outliers = np.array()
+    outliers = []
     weights = weights.numpy()
     for i in range(0, len(scores)):
         if scores[i] < -4:
             outliers.append(weights[i][0])
-    masked_weights = np.ma.masked_values(weights, outliers)
     print("masked: ", len(outliers))
-    return masked_weights, outliers
+    return np.array(outliers)
 
 # lwg: linear quantization utility
 # data: all weights of a Bert layer, in torch Tensor format
 # bits: decides # of bins = 2^bits
 # XXX: this is GOBO base without L1 Norm error minimization 
 # XXX: accuracy is really bad 
-def gobo_quantize_one_layer(layer, bits=6):
-    import numpy as np
+def gobo_quantize_one_layer(layer, bits=3):
     # gather all weights from a layer
     weights = torch.Tensor([]) 
     for name, param in layer.named_parameters():
         if param.requires_grad:
             weights = torch.cat([weights, torch.flatten(param.data)])
-    weights = np.sort(weights)
+    outliers = detect_outliers(weights)
+
+    masked_weights = np.ma.MaskedArray(weights, np.in1d(weights, outliers))
+
+    g_group = masked_weights[~masked_weights.mask]
+
+    weights = np.sort(g_group)
     bins = []
     n_bins = pow(2, bits)
     step = int(len(weights)/n_bins)
     centroids = []
-    # get centroids
+    # calculate centroids in G group
     for i in range(n_bins):
         start = i * step
         centroids.append(np.average(weights[start: start + step]))
         bins.append(weights[start])
+    # last value for all outliers
+    centroids.append(-9999999.0)
     bins.append(weights[-1])
     bins = np.array(bins)
-    print(bins)
+    print("bins are: ", bins)
     centroids = np.array(centroids)
 
     # quantize by centroids 
+    o_count = 0
     for name, param in layer.named_parameters():
         if param.requires_grad:
-            data = param.data
-            #print("before:")
-            #print(data)
-            old_size = data.size()
+            old_size = param.data.size()
+            data = torch.flatten(param.data)
+            # get idx and weights of outliers in this NN module
+            outliers_idx = np.nonzero(np.in1d(data, outliers))
+            outliers_weights = data[outliers_idx[0]]
+            o_count += len(outliers_weights)
+            print("outlier in this layer have:", len(outliers_weights))
             quantized = np.digitize(data, bins, right=True)-1 # return the idx of the centroids
-            data = torch.from_numpy(centroids[quantized])
+            data = torch.from_numpy(centroids[quantized]).float()
+            # recover corresponding weights
+            data[outliers_idx[0]] = outliers_weights 
+            for d in data:
+                if d > 20.0:
+                    print("????????????????????????????????????????????")
             data = data.view(old_size)
-            #data = torch.zeros(old_size)
             param.data = data
-            #print("after:")
-            #print(data)
+            print("after size:", param.data.size())
+    print("recovered ", o_count, "outliers for current layer")
 
 def kmeans_quantize_one_layer(layer, bits):
     import numpy as np
@@ -496,8 +512,8 @@ class BertEncoder(nn.Module):
     def quantize(self):
         for i in range(len(self.layer)):
             print("quantizing ", i)
-            #linear_quantize_one_layer(self.layer[i])
-            kmeans_quantize_one_layer(self.layer[i], 4)
+            gobo_quantize_one_layer(self.layer[i])
+            #kmeans_quantize_one_layer(self.layer[i], 4)
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
         all_hidden_states = ()

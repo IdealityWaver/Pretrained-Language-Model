@@ -348,7 +348,8 @@ def main():
 
     args = parser.parse_args()
     args.model_dir = os.path.join(args.model_dir, 'best')
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    #device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device("cpu")
     args.n_gpu = torch.cuda.device_count()
     args.device = device
 

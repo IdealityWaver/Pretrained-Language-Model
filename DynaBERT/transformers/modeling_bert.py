@@ -68,7 +68,9 @@ def detect_outliers(weights):
     outliers = []
     weights = weights.numpy()
     for i in range(0, len(scores)):
-        if scores[i] < -4:
+        if weights[i][0] == -0.1389:
+            print("found xxx @", i)
+        if scores[i] <= -4.0:
             outliers.append(weights[i][0])
     print("masked: ", len(outliers))
     return np.array(outliers)
@@ -81,15 +83,19 @@ def detect_outliers(weights):
 def gobo_quantize_one_layer(layer, bits=3):
     # gather all weights from a layer
     weights = torch.Tensor([]) 
+    # keep the same as numpy print
+    torch.set_printoptions(precision=8)
     for name, param in layer.named_parameters():
         if param.requires_grad:
             weights = torch.cat([weights, torch.flatten(param.data)])
     outliers = detect_outliers(weights)
-
+    print("torch weights:", weights)
+    # tensor(-0.1389).numpy() gives -0.13887332 because torch print precision is 4 < 8 of numpy 
+    # print(torch.flatten(weights)[199396].numpy())
+    weights = weights.numpy()
+    print("numpy weights:", weights)
     masked_weights = np.ma.MaskedArray(weights, np.in1d(weights, outliers))
-
     g_group = masked_weights[~masked_weights.mask]
-
     weights = np.sort(g_group)
     bins = []
     n_bins = pow(2, bits)
@@ -101,40 +107,52 @@ def gobo_quantize_one_layer(layer, bits=3):
         centroids.append(np.average(weights[start: start + step]))
         bins.append(weights[start])
     # last value for all outliers
-    centroids.append(-9999999.0)
     bins.append(weights[-1])
-    bins = np.array(bins)
+    bins = np.array(bins, dtype=float)
     print("bins are: ", bins)
+    # for outliers 
+    centroids.append(-99999.0)
     centroids = np.array(centroids)
+    print("centroids are: ", centroids)
 
     # quantize by centroids 
     o_count = 0
     for name, param in layer.named_parameters():
         if param.requires_grad:
             old_size = param.data.size()
-            data = torch.flatten(param.data)
-            orig = torch.flatten(param.data)
+            data = torch.flatten(param.data).numpy()
+            orig = torch.flatten(param.data).numpy()
             # get idx and weights of outliers in this NN module
             outliers_idx = np.nonzero(np.in1d(data, outliers))
-            outliers_weights = data[outliers_idx[0]]
+            outliers_weights = data[outliers_idx]
             o_count += len(outliers_weights)
             print("outlier in this layer have:", len(outliers_weights))
-            quantized = np.digitize(data, bins, right=True)-1 # return the idx of the centroids
-            data = torch.from_numpy(centroids[quantized]).float()
+            quantized = np.digitize(data, bins, right = True) - 1 # return the idx of the centroids
+            #print(quantized)
+            for idx,v in enumerate(quantized):
+                if v == len(centroids):
+                    if data[idx] not in outliers:
+                        print("not in outlier...")
+                        print(idx)
+                        print(data[idx])
+            # assign centroids 
+            data = centroids[quantized]
             # recover corresponding weights
-            data[outliers_idx[0]] = outliers_weights 
-            #print(outliers_weights)
-            #print(data[outliers_idx[0]]) 
-            #print(torch.flatten(param.data)[outliers_idx[0]])
+            data[outliers_idx] = outliers_weights 
+            # why still unpatched value??
             for idx,d in enumerate(data):
                 if d < -100.0:
                     print(idx, orig[idx],"??")
+                    print(weights)
                     # there are values that are not in outlier idx 
-                    if idx not in outliers_idx[0]:
-                        print("????")
+                    if orig[idx] not in outliers:
+                        data[idx] = centroids[0]
+                        print("manually patch", orig[idx], "to", data[idx])
+            data = torch.from_numpy(data).float()
             data = data.view(old_size)
             param.data = data
             print("after size:", param.data.size())
+    assert o_count == len(outliers)
     print("recovered ", o_count, "outliers for current layer")
 
 def kmeans_quantize_one_layer(layer, bits):

@@ -152,9 +152,12 @@ def gobo_quantize_one_layer(layer, bits=3):
             data = data.view(old_size)
             param.data = data
             print("after size:", param.data.size())
+            print(param.data)
     assert o_count == len(outliers)
     print("recovered ", o_count, "outliers for current layer")
 
+
+# lwg:to mearge w/ gobo
 def kmeans_quantize_one_layer(layer, bits):
     import numpy as np
     from sklearn.cluster import KMeans
@@ -163,16 +166,22 @@ def kmeans_quantize_one_layer(layer, bits):
     for name, param in layer.named_parameters():
         if param.requires_grad:
             weights = torch.cat([weights, torch.flatten(param.data)])
-    weights = weights.reshape(-1, 1)
-    km = KMeans(n_clusters=pow(2, bits), random_state=0, tol=1e-8).fit(weights)
+    outliers = detect_outliers(weights)
+    weights = weights.numpy()
+    masked_weights = np.ma.MaskedArray(weights, np.in1d(weights, outliers))
+    g_group = masked_weights[~masked_weights.mask]
+    km = KMeans(n_clusters=pow(2, bits), random_state=0, tol=1e-8).fit(g_group)
     print(km.labels_)
     print(km.cluster_centers_)
     for name, param in layer.named_parameters():
         if param.requires_grad:
             old_size = param.data.size()
             param.data = torch.flatten(param.data).reshape(-1, 1)
+            outliers_idx = np.nonzero(np.in1d(data, outliers))
+            outliers_weights = param.data[outliers_idx]
             labels = km.predict(param.data)
             new_param = km.cluster_centers_[labels]
+            new_param[outlier_idx] = outlier_weights
             param.data = torch.from_numpy(new_param).float().view(old_size)
             print(param.data)
     

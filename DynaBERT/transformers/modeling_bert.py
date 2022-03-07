@@ -176,13 +176,18 @@ def kmeans_quantize_one_layer(layer, bits):
     for name, param in layer.named_parameters():
         if param.requires_grad:
             old_size = param.data.size()
-            data = torch.flatten(param.data)
+            data = torch.flatten(param.data).numpy()
             param.data = torch.flatten(param.data).reshape(-1,1)
             outliers_idx = np.nonzero(np.in1d(data, outliers))
             outliers_weights = data[outliers_idx]
+            print(outliers_idx)
+            print(outliers_weights)
             labels = km.predict(param.data)
-            new_param = km.cluster_centers_[labels]
-            new_param[outliers_idx] = outliers_weights
+            print(labels)
+            new_param = km.cluster_centers_[labels].flatten()
+            print("quantized:", new_param)
+            idx = outliers_idx[0].flatten()
+            new_param[idx] = outliers_weights
             param.data = torch.from_numpy(new_param).float().view(old_size)
             print(param.data)
     

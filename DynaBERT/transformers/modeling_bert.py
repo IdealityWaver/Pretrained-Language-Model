@@ -162,13 +162,14 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
             if "LayerNorm" not in name:
                 continue
             '''
+            for m in layer.children():
+                print(m)
             # mix quantized attention head
             original_heads = torch.split(param.data, 64, 0)
             this_heads = torch.split(this_module, 64, 0)
-            print("",) 
             print("module size:", param.data.size())
             print("head size: ", original_heads[0].size())
-            this_module = torch.cat((torch.cat((this_heads[:6])), torch.cat((original_heads[6:])))).view(size)
+            #this_module = torch.cat((torch.cat((this_heads[:6])), torch.cat((original_heads[6:])))).view(size)
             # ----
             param.data = this_module
             o_this = len(np.nonzero(np.in1d(param.data.flatten(), o_group))[0])

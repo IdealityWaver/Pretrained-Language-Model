@@ -26,6 +26,7 @@ import logging
 import math
 import os
 import sys
+import time
 sys.path.append("..")
 
 import torch
@@ -92,7 +93,6 @@ def gobo_quantize(weights, o_idx, bits):
     print("gobo qunatization. Bits = ", bits)
     g_group = weights[~o_idx]
     g_group = np.sort(g_group)
-    print(g_group)
     bins = []
     n_bins = pow(2, bits)
     step = int(len(g_group)/n_bins)
@@ -108,9 +108,15 @@ def gobo_quantize(weights, o_idx, bits):
     centroids = np.array(centroids)
     # assign quantized values
     quantized = np.digitize(weights, bins, right = True) - 1 # return the idx of the centroids
+    start = time.time()
     new_weights = centroids[quantized]
-    # recover corresponding weights
+    # recover corresponding outlier weights
     new_weights[o_idx] = weights[o_idx]
+    end = time.time()
+    print("restoring weight takes " ,(end-start) * 1000)
+    print("centroids size: " , centroids.shape)
+    print("quantized weight size: ", quantized.shape)
+    print("original weight size: ", weights.size())
     # sanity check manually patch some values...
     for idx,d in enumerate(new_weights):
         if d < -100.0:
@@ -150,6 +156,7 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
     '''
     o_count = 0
     # apply quantized weights to original NN module
+    start = time.time()
     for name, param in layer.named_parameters():
         if param.requires_grad:
             size = param.data.size()
@@ -162,6 +169,8 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
             if "LayerNorm" not in name:
                 continue
             '''
+
+            '''
             for m in layer.children():
                 print(m)
             # mix quantized attention head
@@ -171,11 +180,15 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
             print("head size: ", original_heads[0].size())
             #this_module = torch.cat((torch.cat((this_heads[:6])), torch.cat((original_heads[6:])))).view(size)
             # ----
+            '''
             param.data = this_module
-            o_this = len(np.nonzero(np.in1d(param.data.flatten(), o_group))[0])
+            #o_this = len(np.nonzero(np.in1d(param.data.flatten(), o_group))[0])
+            o_this = 0
             o_count += o_this
             print("outliers in", name, ":", "{:.2%}".format(o_this/param.data.nelement()))
+    end = time.time()
     print("total outliers in this layer:", "{:.2%}".format(o_count/weights.nelement()))
+    print("time to restore compressed weights:", (end - start)*1000)
     # sanity check, all outliers must be preserved 
     #assert o_count == len(o_group)
     return
@@ -661,6 +674,7 @@ class BertEncoder(nn.Module):
             _quantize(self.layer[i], gobo_quantize, True, bits)
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
+        start = time.time()
         all_hidden_states = ()
         all_attentions = ()
         all_intermediate = ()
@@ -697,6 +711,8 @@ class BertEncoder(nn.Module):
             outputs = outputs + (all_attentions,)
         if self.output_intermediate:
             outputs = outputs + (all_intermediate,)
+        end = time.time()
+        print(self, "forwarding in Encoder time: ", (end-start)*1000)
         return outputs  # last-layer hidden state, (all hidden states), (all attentions)
 
 

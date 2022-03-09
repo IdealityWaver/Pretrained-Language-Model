@@ -5,6 +5,7 @@ TASK=SST-2
 #TASK=MNLI
 python eval_glue.py \
 	--model_type bert \
+	--per_gpu_eval_batch_size 1 \
        	--task_name ${TASK} \
 	--data_dir ../../${TASK}/ \
        	--max_seq_length 128 \

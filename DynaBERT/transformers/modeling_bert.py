@@ -81,7 +81,7 @@ def gather_layer_weights(layer):
     orig = []
     for name, param in layer.named_parameters():
         if param.requires_grad:
-            orig.append(param)
+            orig.append((param, name))
             weights = torch.cat([weights, torch.flatten(param.data)])
     return weights, orig 
 
@@ -135,20 +135,48 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
     else:
         o_idx = []
     new_weights = quantize_f(weights, o_idx, bits)
+    '''
     # restore to original NN module
-    for src in orig_param:
+    for (src, name) in orig_param:
         size = src.data.size()
         length = src.data.nelement()
         orig = new_weights[:length]
         new_weights = new_weights[length:]
+        # only qunatize non-layernorm modules in a layer 
+        if "LayerNorm" not in name:
+            print("skipping other layer")
+            continue
         src.data = torch.from_numpy(orig).float().view(size)
+    '''
     o_count = 0
-    # sanity check, all outliers must be preserved 
+    # apply quantized weights to original NN module
     for name, param in layer.named_parameters():
         if param.requires_grad:
-            o_count += len(np.nonzero(np.in1d(param.data.flatten(), o_group))[0])
-    print("patched ", o_count)
-    assert o_count == len(o_group)
+            size = param.data.size()
+            length = param.data.nelement()
+            # unroll the parameters from the large quantized weights
+            this_module = torch.from_numpy(new_weights[:length]).float().view(size)
+            new_weights = new_weights[length:]
+            ''' 
+            # check mixed quantization choice for different modules within a layer
+            if "LayerNorm" not in name:
+                continue
+            '''
+            # mix quantized attention head
+            original_heads = torch.split(param.data, 64, 0)
+            this_heads = torch.split(this_module, 64, 0)
+            print("",) 
+            print("module size:", param.data.size())
+            print("head size: ", original_heads[0].size())
+            this_module = torch.cat((torch.cat((this_heads[:6])), torch.cat((original_heads[6:])))).view(size)
+            # ----
+            param.data = this_module
+            o_this = len(np.nonzero(np.in1d(param.data.flatten(), o_group))[0])
+            o_count += o_this
+            print("outliers in", name, ":", "{:.2%}".format(o_this/param.data.nelement()))
+    print("total outliers in this layer:", "{:.2%}".format(o_count/weights.nelement()))
+    # sanity check, all outliers must be preserved 
+    #assert o_count == len(o_group)
     return
 
 
@@ -623,6 +651,8 @@ class BertEncoder(nn.Module):
         self.depth_mult = 1.
 
     def quantize(self, bits):
+        #for i in range(6, 12):
+        #for i in np.random.choice(12, 6, replace=False):
         for i in range(len(self.layer)):
             print("quantizing ", i)
             #gobo_quantize_one_layer(self.layer[i], 6)

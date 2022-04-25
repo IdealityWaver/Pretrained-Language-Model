@@ -382,6 +382,7 @@ def main():
     
     #model.bert.quantize()
     bits = 3
+    model.bert.embeddings.quantize(2)
     model.bert.encoder.quantize(bits)
     model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
     model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))

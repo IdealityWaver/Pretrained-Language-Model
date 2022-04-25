@@ -108,6 +108,8 @@ def gobo_quantize(weights, o_idx, bits):
     centroids = np.array(centroids)
     # assign quantized values
     quantized = np.digitize(weights, bins, right = True) - 1 # return the idx of the centroids
+    print("quantzied weights are:", quantized)
+    save_weight_to_file('/tmp/weight', quantized)
     start = time.time()
     new_weights = centroids[quantized]
     # recover corresponding outlier weights
@@ -182,17 +184,21 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
             # ----
             '''
             param.data = this_module
-            #o_this = len(np.nonzero(np.in1d(param.data.flatten(), o_group))[0])
-            o_this = 0
+            #o_this = 0
+            o_this = len(np.nonzero(np.in1d(param.data.flatten(), o_group))[0])
             o_count += o_this
-            print("outliers in", name, ":", "{:.2%}".format(o_this/param.data.nelement()))
+            #print("outliers in", name, ":", "{:.2%}".format(o_this/param.data.nelement()))
     end = time.time()
     print("total outliers in this layer:", "{:.2%}".format(o_count/weights.nelement()))
     print("time to restore compressed weights:", (end - start)*1000)
     # sanity check, all outliers must be preserved 
-    #assert o_count == len(o_group)
+    assert o_count == len(o_group)
     return
 
+
+def save_weight_to_file(filename, weights):
+    f = open(filename, 'wb')
+    np.save(f, weights)
 
 # data: all weights of a Bert layer, in torch Tensor format
 # bits: decides # of bins = 2^bits
@@ -245,7 +251,7 @@ def gobo_quantize_one_layer(layer, bits=3):
             o_count += len(outliers_weights)
             print("outlier in this layer have:", len(outliers_weights))
             quantized = np.digitize(data, bins, right = True) - 1 # return the idx of the centroids
-            #print(quantized)
+            print("quantized matrix is:", quantized)
             for idx,v in enumerate(quantized):
                 if v == len(centroids):
                     if data[idx] not in outliers:
@@ -429,6 +435,11 @@ class BertEmbeddings(nn.Module):
         # any TensorFlow checkpoint file
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def quantize(self, bits):
+        _quantize(self.word_embeddings, gobo_quantize, detect_o=True, bits=bits)
+        _quantize(self.position_embeddings, gobo_quantize, detect_o=True, bits=bits)
+        _quantize(self.token_type_embeddings, gobo_quantize, detect_o=True, bits=bits)
 
     def forward(self, input_ids, token_type_ids=None, position_ids=None):
         seq_length = input_ids.size(1)
@@ -674,7 +685,7 @@ class BertEncoder(nn.Module):
             _quantize(self.layer[i], gobo_quantize, True, bits)
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
-        start = time.time()
+        #start = time.time()
         all_hidden_states = ()
         all_attentions = ()
         all_intermediate = ()
@@ -711,8 +722,8 @@ class BertEncoder(nn.Module):
             outputs = outputs + (all_attentions,)
         if self.output_intermediate:
             outputs = outputs + (all_intermediate,)
-        end = time.time()
-        print(self, "forwarding in Encoder time: ", (end-start)*1000)
+        #end = time.time()
+        #print(self, "forwarding in Encoder time: ", (end-start)*1000)
         return outputs  # last-layer hidden state, (all hidden states), (all attentions)
 
 

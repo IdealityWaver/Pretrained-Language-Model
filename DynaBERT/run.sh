@@ -3,6 +3,27 @@
 TASK=SST-2
 #TASK=STS-B
 #TASK=MNLI
+#for ((emb = 1; emb <= 5; emb++))
+for ((emb = 0; emb < 1; emb++))
+do 
+	for ((enc=2; enc <=6; enc++))
+	do
+		python eval_glue.py \
+			--model_type bert \
+			--per_gpu_eval_batch_size 128 \
+			--task_name ${TASK} \
+			--data_dir ../../${TASK}/ \
+			--max_seq_length 128 \
+			--model_dir ./models/${TASK} \
+			--output_dir /home/lwg/res \
+			--depth_mult 1 \
+			--width_mult 1 \
+			--emb ${emb} \
+			--enc ${enc} 
+	done
+done 
+
+: '
 python eval_glue.py \
 	--model_type bert \
 	--per_gpu_eval_batch_size 128 \
@@ -13,4 +34,6 @@ python eval_glue.py \
        	--output_dir /tmp \
        	--depth_mult 1 \
 	--width_mult 0.75
+'
+
 

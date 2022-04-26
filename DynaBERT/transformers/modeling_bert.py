@@ -109,13 +109,13 @@ def gobo_quantize(weights, o_idx, bits):
     # assign quantized values
     quantized = np.digitize(weights, bins, right = True) - 1 # return the idx of the centroids
     print("quantzied weights are:", quantized)
-    save_weight_to_file('/tmp/weight', quantized)
+    #save_weight_to_file('/tmp/weight', quantized)
     start = time.time()
     new_weights = centroids[quantized]
     # recover corresponding outlier weights
     new_weights[o_idx] = weights[o_idx]
     end = time.time()
-    print("restoring weight takes " ,(end-start) * 1000)
+    print("restoring weight takes " ,(end-start) * 1000, "ms")
     print("centroids size: " , centroids.shape)
     print("quantized weight size: ", quantized.shape)
     print("original weight size: ", weights.size())
@@ -157,8 +157,8 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
         src.data = torch.from_numpy(orig).float().view(size)
     '''
     o_count = 0
-    # apply quantized weights to original NN module
     start = time.time()
+    # apply quantized weights to original NN module
     for name, param in layer.named_parameters():
         if param.requires_grad:
             size = param.data.size()
@@ -190,7 +190,8 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
             #print("outliers in", name, ":", "{:.2%}".format(o_this/param.data.nelement()))
     end = time.time()
     print("total outliers in this layer:", "{:.2%}".format(o_count/weights.nelement()))
-    print("time to restore compressed weights:", (end - start)*1000)
+    # the measured time is not meaningful as it is pytorch implementation
+    # print("time to restore compressed weights:", (end - start)*1000)
     # sanity check, all outliers must be preserved 
     assert o_count == len(o_group)
     return
@@ -456,6 +457,7 @@ class BertEmbeddings(nn.Module):
         embeddings = words_embeddings + position_embeddings + token_type_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
+        #print("embeddings for ", input_ids, ": ", embeddings)
         return embeddings
 
 

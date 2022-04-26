@@ -246,8 +246,8 @@ def evaluate(args, model, tokenizer, prefix=""):
         with open(output_eval_file, "a") as writer:
             logger.info("***** Eval results {} *****".format(prefix))
             for key in sorted(result.keys()):
-                logger.info("  %s = %s", key, str(result[key]))
-                writer.write("%s = %s\n" % (key, str(result[key])))
+                logger.info("%s = %s (emb bits = %d, enc bits = %d)\n" % (key, str(result[key]), args.emb, args.enc))
+                writer.write("%s = %s (emb bits = %d, enc bits = %d)\n" % (key, str(result[key]), args.emb, args.enc))
             writer.write("\n")
     return results
 
@@ -346,6 +346,12 @@ def main():
     parser.add_argument('--width_mult', type=str, default='1.',
                         help="the possible depths used for training, e.g., '1.' is for default")
 
+    # lwg tune encoder/embedding bits
+    parser.add_argument('--emb', type=int, default=0,
+                        help="Embedding quantization bits")
+    parser.add_argument('--enc', type=int, default=0,
+                        help="Encoder quantization bits")
+    
     args = parser.parse_args()
     args.model_dir = os.path.join(args.model_dir, 'best')
     #device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -380,16 +386,19 @@ def main():
     model = model_class.from_pretrained(args.model_dir, config=config)
     model.to(args.device)
     
-    #model.bert.quantize()
-    bits = 3
-    model.bert.embeddings.quantize(2)
-    model.bert.encoder.quantize(bits)
+    emb_bits = args.emb
+    enc_bits = args.enc
+    if emb_bits != 0:
+        model.bert.embeddings.quantize(emb_bits)
+    if enc_bits != 0:
+        model.bert.encoder.quantize(enc_bits)
     model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
     model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
 
     results = evaluate(args, model, tokenizer)
     print(results)
-    print("quantizing to ", bits, " bits")
+    print("emb bits:", emb_bits)
+    print("enc bits:", enc_bits)
 
 
 if __name__ == "__main__":

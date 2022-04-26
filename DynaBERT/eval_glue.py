@@ -158,7 +158,6 @@ def evaluate(args, model, tokenizer, prefix=""):
     eval_task_names = ("mnli", "mnli-mm") if args.task_name == "mnli" else (args.task_name,)
 
     results = {}
-    #torch.set_num_threads(6)
     for eval_task in eval_task_names:
         eval_dataset = load_and_cache_examples(args, eval_task, tokenizer, evaluate=True)
 
@@ -394,6 +393,12 @@ def main():
         model.bert.encoder.quantize(enc_bits)
     model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
     model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
+
+    '''
+    # save quantized model...
+    model.save_pretrained('/home/lwg/models')
+    return
+    '''
 
     results = evaluate(args, model, tokenizer)
     print(results)

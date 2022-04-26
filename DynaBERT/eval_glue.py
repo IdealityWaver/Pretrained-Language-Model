@@ -352,7 +352,10 @@ def main():
                         help="Encoder quantization bits")
     
     args = parser.parse_args()
-    args.model_dir = os.path.join(args.model_dir, 'best')
+    # lwg: don't use best
+    #args.model_dir = os.path.join(args.model_dir, 'best')
+    bits_conf = str(args.emb) + '_' + str(args.enc)
+    args.model_dir = os.path.join(args.model_dir, bits_conf)
     #device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     device = torch.device("cpu")
     args.n_gpu = torch.cuda.device_count()
@@ -387,22 +390,27 @@ def main():
     
     emb_bits = args.emb
     enc_bits = args.enc
+    '''
+    # quantize then save the model...
     if emb_bits != 0:
         model.bert.embeddings.quantize(emb_bits)
     if enc_bits != 0:
         model.bert.encoder.quantize(enc_bits)
-    model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
-    model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
-
-    '''
-    # save quantized model...
-    model.save_pretrained('/home/lwg/models')
+    # dir_format ~/models/#emb_#enc 
+    model_save_dir = os.path.join('/home/lwg/models/', str(emb_bits) + '_' + str(enc_bits))
+    if not os.path.exists(model_save_dir):
+                # and args.local_rank in [-1, 0]:
+            os.makedirs(model_save_dir)
+    model.save_pretrained(model_save_dir)
     return
     '''
 
+    model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
+    model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
+
     results = evaluate(args, model, tokenizer)
     print(results)
-    print("emb bits:", emb_bits)
+    print("emb bits:", args)
     print("enc bits:", enc_bits)
 
 

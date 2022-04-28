@@ -5,6 +5,7 @@ TASK=SST-2
 #TASK=MNLI
 #for ((emb = 1; emb <= 5; emb++))
 
+: '
 for ((emb = 3; emb < 4; emb++))
 do 
 	for ((enc=2; enc <=6; enc++))
@@ -23,7 +24,7 @@ do
 			--enc ${enc} 
 	done
 done 
-: '
+' 
 #--model_dir /home/lwg/models \
 #--model_dir ./models/${TASK} \
 python eval_glue.py \
@@ -36,7 +37,6 @@ python eval_glue.py \
        	--output_dir /tmp \
        	--depth_mult 1 \
 	--width_mult 1 \
-	--emb 0 \
-	--enc 0
-' 
+	--emb 3 \
+	--enc 6
 

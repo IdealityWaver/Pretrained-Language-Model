@@ -355,6 +355,8 @@ def main():
     # lwg: don't use best
     #args.model_dir = os.path.join(args.model_dir, 'best')
     bits_conf = str(args.emb) + '_' + str(args.enc)
+    #bits_conf = ''
+    model_root = args.model_dir
     args.model_dir = os.path.join(args.model_dir, bits_conf)
     #device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     device = torch.device("cpu")
@@ -383,18 +385,45 @@ def main():
     args.model_type = args.model_type.lower()
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
 
+    # lwg: load one model 
     config = config_class.from_pretrained(args.model_dir, num_labels=num_labels, finetuning_task=args.task_name)
     tokenizer = tokenizer_class.from_pretrained(args.model_dir, do_lower_case=args.do_lower_case)
     model = model_class.from_pretrained(args.model_dir, config=config)
     model.to(args.device)
-    
-    emb_bits = args.emb
-    enc_bits = args.enc
+
+    # load 2 - 6 bits
+    models = []
+    enc_bits = np.arange(2, 7)
+
+    def load_quantized_model(enc_bit, emb_bit=3):
+        bits_conf = str(emb_bit) + '_' + str(enc_bit)
+        print("loading ", bits_conf, "...")
+        model_dir = os.path.join(model_root, bits_conf)
+        config = config_class.from_pretrained(model_dir, num_labels=num_labels, finetuning_task=args.task_name)
+        tokenizer = tokenizer_class.from_pretrained(model_dir, do_lower_case=args.do_lower_case)
+        _model = model_class.from_pretrained(model_dir, config=config)
+        _model.to(args.device)
+        _model.bert.encoder.update_bit(enc_bit)
+        model.bert.encoder.add_quantized_model(_model.bert.encoder)
+        # 64 dim per head
+        #print(model.bert.encoder.layer[0].attention.self.attention_head_size)
+        return _model
+
+    for bit in enc_bits:
+        m  = load_quantized_model(bit)
+        
+    for i in range(12):
+        model.bert.encoder.layer[i].attention.patch_attention_shards([6]*12)
+        model.bert.encoder.layer[i].intermediate.patch_intermediate_shards([6]*12)
+        model.bert.encoder.layer[i].output.patch_ffn_shards([6]*12)
+    #print(model.bert.encoder.quantized)
+    #return
+
     '''
     # quantize then save the model...
     if emb_bits != 0:
         model.bert.embeddings.quantize(emb_bits)
-    if enc_bits != 0:
+    if enc_bits != 1:
         model.bert.encoder.quantize(enc_bits)
     # dir_format ~/models/#emb_#enc 
     model_save_dir = os.path.join('/home/lwg/models/', str(emb_bits) + '_' + str(enc_bits))
@@ -402,6 +431,7 @@ def main():
                 # and args.local_rank in [-1, 0]:
             os.makedirs(model_save_dir)
     model.save_pretrained(model_save_dir)
+    tokenizer.save_vocabulary(model_save_dir)
     return
     '''
 

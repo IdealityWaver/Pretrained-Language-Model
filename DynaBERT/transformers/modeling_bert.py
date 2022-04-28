@@ -547,15 +547,20 @@ class BertAttention(nn.Module):
         super(BertAttention, self).__init__()
         self.self = BertSelfAttention(config)
         self.output = BertSelfOutput(config)
-
+        # models with other bit widths of the same layer
+        self.quantized = {}
+    
+    # lwg: idx is a list of head idx (0-11), sorted by their importance in descending order
     def reorder_heads(self, idx):
         n, a = self.self.num_attention_heads, self.self.attention_head_size
+        # group every 64-dim as an attention head and reorder as described in idx array
         index = torch.arange(n*a).reshape(n, a)[idx].view(-1).contiguous().long()
 
         def reorder_head_matrix(linearLayer, index, dim=0):
             index = index.to(linearLayer.weight.device)
             W = linearLayer.weight.index_select(dim, index).clone().detach()
             if linearLayer.bias is not None:
+                # if dim == 1, then do not reorder bias
                 if dim == 1:
                     b = linearLayer.bias.clone().detach()
                 else:
@@ -574,6 +579,60 @@ class BertAttention(nn.Module):
         reorder_head_matrix(self.self.value, index)
         reorder_head_matrix(self.output.dense, index, dim=1)
 
+    # lwg: use similar methods for applying mixed-precision shards 
+    # bits: 1x12 array, each entry indicates a bit width for the attention head at its entry's idx
+    def patch_attention_shards(self, bits):
+        # 12 attention heads, each of 64 dimensions
+        n, a = self.self.num_attention_heads, self.self.attention_head_size
+        def patch_one_shard(dst, key, bits, dim=0):
+            for idx, bit in enumerate(bits):
+                if bit not in self.quantized.keys():
+                    print("XXXXXXXX requested %d bit not loaded yet!!" % (bit))
+                index = torch.arange(idx * a, (idx + 1) * a)
+                if key == 'q':
+                    src = self.quantized[bit].self.query
+                elif key == 'k':
+                    src = self.quantized[bit].self.key
+                elif key == 'v':
+                    src = self.quantized[bit].self.value
+                elif key == 'o':
+                    src = self.quantized[bit].output.dense
+                src_w = src.weight.index_select(dim, index).clone().detach()
+                if dst.bias is not None:
+                    src_b = src.bias[index].clone().detach()
+                    if dim == 1:
+                        print(dst.bias.size())
+                        # --- do nothing --- 
+                    else:
+                        #src_b = src.bias[index].clone().detach()
+                        print(dst.bias.size())
+
+
+                dst.weight.requires_grad = False
+                dst.weight.index_copy_(dim, index, src_w.contiguous())
+                dst.weight.requires_grad = True
+
+                if dst.bias is not None:
+                    dst.bias.requires_grad = False
+                    dst.bias.index_copy_(0, index, src_b.contiguous())
+                    dst.bias.requires_grad = True
+
+        #print("----before patching---")
+        #print(self.self.query.weight)
+        patch_one_shard(self.self.query, 'q', bits)
+        patch_one_shard(self.self.key, 'k', bits)
+        patch_one_shard(self.self.value, 'v', bits)
+        patch_one_shard(self.output.dense, 'o', bits, dim=1)
+        #print("----after patching---")
+        #print(self.self.query.weight)
+        #print("---- compare with ---- ")
+        #print(torch.eq(self.self.query.weight, self.quantized[bits[0]].self.query.weight))
+        return
+
+
+    def add_quantized_model(self, bit, attn):
+        self.quantized[bit] = attn
+
     def forward(self, input_tensor, attention_mask=None, head_mask=None):
         self_outputs = self.self(input_tensor, attention_mask, head_mask)
         attention_output = self.output(self_outputs[0], input_tensor)
@@ -585,12 +644,47 @@ class BertIntermediate(nn.Module):
     def __init__(self, config):
         super(BertIntermediate, self).__init__()
         # dense layer for adaptive width
+        # lwg: hidden size = 768, intermediate_size = 3072
         self.dense = DynaLinear(config.hidden_size, config.intermediate_size,
                                 config.num_attention_heads, dyna_dim=[False, True])
         if isinstance(config.hidden_act, str) or (sys.version_info[0] == 2 and isinstance(config.hidden_act, unicode)):
             self.intermediate_act_fn = ACT2FN[config.hidden_act]
         else:
             self.intermediate_act_fn = config.hidden_act
+        # lwg: XXX
+        self.quantized = {}
+
+    def patch_intermediate_shards(self, bits):
+        print("patch intermediate shards..")
+        a = int(self.dense.in_features / self.dense.num_heads)
+        print("Size:", a)
+        def patch_one_shard(dst, bits, dim=0):
+            for idx, bit in enumerate(bits):
+                if bit not in self.quantized.keys():
+                    print("XXXXXXXX requested %d bit not loaded yet!!" % (bit))
+                index = torch.arange(idx * a, (idx + 1) * a)
+                src = self.quantized[bit].dense
+                src_w = src.weight.index_select(dim, index).clone().detach()
+                if dst.bias is not None:
+                    src_b = src.bias[index].clone().detach()
+                    if dim == 1:
+                        print(dst.bias.size())
+                        # --- do nothing --- 
+                    else:
+                        #src_b = src.bias[index].clone().detach()
+                        print(dst.bias.size())
+
+                dst.weight.requires_grad = False
+                dst.weight.index_copy_(dim, index, src_w.contiguous())
+                dst.weight.requires_grad = True
+
+                if dst.bias is not None:
+                    dst.bias.requires_grad = False
+                    dst.bias.index_copy_(0, index, src_b.contiguous())
+                    dst.bias.requires_grad = True
+
+        patch_one_shard(self.dense, bits)
+
 
     def reorder_neurons(self, index, dim=0):
         index = index.to(self.dense.weight.device)
@@ -614,6 +708,7 @@ class BertIntermediate(nn.Module):
         return hidden_states
 
 
+# lwg: this is actually FFN
 class BertOutput(nn.Module):
     def __init__(self, config):
         super(BertOutput, self).__init__()
@@ -622,6 +717,40 @@ class BertOutput(nn.Module):
                                   config.num_attention_heads, dyna_dim=[True, False])
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        # lwg: keep track of quantized siblings 
+        self.quantized = {}
+
+    def patch_ffn_shards(self, bits):
+        print("patch FFN shards..")
+        a = int(self.dense.out_features / self.dense.num_heads)
+        print("Size:", a)
+        def patch_one_shard(dst, bits, dim=1):
+            for idx, bit in enumerate(bits):
+                if bit not in self.quantized.keys():
+                    print("XXXXXXXX requested %d bit not loaded yet!!" % (bit))
+                index = torch.arange(idx * a, (idx + 1) * a)
+                src = self.quantized[bit].dense
+                src_w = src.weight.index_select(dim, index).clone().detach()
+                if dst.bias is not None:
+                    src_b = src.bias[index].clone().detach()
+                    if dim == 1:
+                        print(dst.bias.size())
+                        # --- do nothing --- 
+                    else:
+                        #src_b = src.bias[index].clone().detach()
+                        print(dst.bias.size())
+
+                dst.weight.requires_grad = False
+                dst.weight.index_copy_(dim, index, src_w.contiguous())
+                dst.weight.requires_grad = True
+
+                if dst.bias is not None:
+                    dst.bias.requires_grad = False
+                    dst.bias.index_copy_(0, index, src_b.contiguous())
+                    dst.bias.requires_grad = True
+
+        patch_one_shard(self.dense, bits)
+
 
     def reorder_neurons(self, index, dim=1):
         index = index.to(self.dense.weight.device)
@@ -676,6 +805,22 @@ class BertEncoder(nn.Module):
         self.output_intermediate = config.output_intermediate
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.depth_mult = 1.
+        # lwg: orig precsion bit = 0
+        self.bit = 0
+        # point to other quantized models
+        self.quantized = {}
+
+    def add_quantized_model(self, bert_encoder):
+        bit = bert_encoder.bit
+        for i in range(len(self.layer)):
+            print("adding %d layer in %d bits" % (i, bit))
+            self.layer[i].attention.quantized[bit] = bert_encoder.layer[i].attention
+            self.layer[i].intermediate.quantized[bit] = bert_encoder.layer[i].intermediate
+            self.layer[i].output.quantized[bit] = bert_encoder.layer[i].output
+        return
+
+    def update_bit(self, bit):
+        self.bit = bit
 
     def quantize(self, bits):
         #for i in range(6, 12):
@@ -685,6 +830,7 @@ class BertEncoder(nn.Module):
             #gobo_quantize_one_layer(self.layer[i], 6)
             #kmeans_quantize_one_layer(self.layer[i], 3)
             _quantize(self.layer[i], gobo_quantize, True, bits)
+
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
         #start = time.time()
@@ -732,6 +878,8 @@ class BertEncoder(nn.Module):
 class BertPooler(nn.Module):
     def __init__(self, config):
         super(BertPooler, self).__init__()
+        # lwg: 768 x 768
+        # lwg: shall we take a slice as well??
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
 
@@ -866,6 +1014,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
 
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        # lwg: 768 x 2
         self.classifier = nn.Linear(config.hidden_size, self.config.num_labels)
 
         self.init_weights()

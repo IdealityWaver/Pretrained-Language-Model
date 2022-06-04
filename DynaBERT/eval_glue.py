@@ -412,10 +412,15 @@ def main():
     for bit in enc_bits:
         m  = load_quantized_model(bit)
         
+    shard_conf1 = [2] * 12
+    #shard_conf1[3] = 6 
+    #shard_conf1[0] = 6 
     for i in range(12):
-        model.bert.encoder.layer[i].attention.patch_attention_shards([6]*12)
-        model.bert.encoder.layer[i].intermediate.patch_intermediate_shards([6]*12)
-        model.bert.encoder.layer[i].output.patch_ffn_shards([6]*12)
+        model.bert.encoder.layer[i].attention.patch_attention_shards(shard_conf1)
+        model.bert.encoder.layer[i].intermediate.patch_intermediate_shards(shard_conf1)
+        model.bert.encoder.layer[i].output.patch_ffn_shards(shard_conf1)
+
+
     #print(model.bert.encoder.quantized)
     #return
 
@@ -434,7 +439,31 @@ def main():
     tokenizer.save_vocabulary(model_save_dir)
     return
     '''
+    def write_to_results(s):
+        output_eval_file = os.path.join(eval_output_dir, "eval_results_{0}.txt".format(eval_task))
+        with open(output_eval_file, "a") as writer:
+            writer.write(s)
+            writer.write('\n')
 
+
+    for i in range(0, 12):
+        shard_conf2 = [2] * 12
+        shard_conf2[i] = 6
+        model.bert.encoder.layer[11].attention.patch_attention_shards(shard_conf2)
+        model.bert.encoder.layer[11].intermediate.patch_intermediate_shards(shard_conf2)
+        model.bert.encoder.layer[11].output.patch_ffn_shards(shard_conf2)
+
+        model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
+        model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
+
+        results = evaluate(args, model, tokenizer)
+        print(shard_conf2)
+        print(results)
+        print("emb bits:", args)
+        print("enc bits:", enc_bits)
+
+
+    '''
     model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
     model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
 
@@ -442,6 +471,8 @@ def main():
     print(results)
     print("emb bits:", args)
     print("enc bits:", enc_bits)
+    print(shard_conf1)
+    '''
 
 
 if __name__ == "__main__":

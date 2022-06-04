@@ -600,13 +600,6 @@ class BertAttention(nn.Module):
                 src_w = src.weight.index_select(dim, index).clone().detach()
                 if dst.bias is not None:
                     src_b = src.bias[index].clone().detach()
-                    if dim == 1:
-                        print(dst.bias.size())
-                        # --- do nothing --- 
-                    else:
-                        #src_b = src.bias[index].clone().detach()
-                        print(dst.bias.size())
-
 
                 dst.weight.requires_grad = False
                 dst.weight.index_copy_(dim, index, src_w.contiguous())
@@ -623,10 +616,6 @@ class BertAttention(nn.Module):
         patch_one_shard(self.self.key, 'k', bits)
         patch_one_shard(self.self.value, 'v', bits)
         patch_one_shard(self.output.dense, 'o', bits, dim=1)
-        #print("----after patching---")
-        #print(self.self.query.weight)
-        #print("---- compare with ---- ")
-        #print(torch.eq(self.self.query.weight, self.quantized[bits[0]].self.query.weight))
         return
 
 
@@ -667,13 +656,7 @@ class BertIntermediate(nn.Module):
                 src_w = src.weight.index_select(dim, index).clone().detach()
                 if dst.bias is not None:
                     src_b = src.bias[index].clone().detach()
-                    if dim == 1:
-                        print(dst.bias.size())
-                        # --- do nothing --- 
-                    else:
-                        #src_b = src.bias[index].clone().detach()
-                        print(dst.bias.size())
-
+                   
                 dst.weight.requires_grad = False
                 dst.weight.index_copy_(dim, index, src_w.contiguous())
                 dst.weight.requires_grad = True

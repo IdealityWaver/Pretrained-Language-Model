@@ -385,11 +385,12 @@ def main():
     args.model_type = args.model_type.lower()
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
 
-    # lwg: load one model 
+    # lwg: load one base model, specified by enc_bit, emb_bit 
     config = config_class.from_pretrained(args.model_dir, num_labels=num_labels, finetuning_task=args.task_name)
     tokenizer = tokenizer_class.from_pretrained(args.model_dir, do_lower_case=args.do_lower_case)
     model = model_class.from_pretrained(args.model_dir, config=config)
     model.to(args.device)
+    model.bert.encoder.update_bit(32)
 
     # load 2 - 6 bits
     models = []
@@ -409,16 +410,28 @@ def main():
         #print(model.bert.encoder.layer[0].attention.self.attention_head_size)
         return _model
 
+    '''
     for bit in enc_bits:
         m  = load_quantized_model(bit)
-        
-    shard_conf1 = [2] * 12
+    '''
+    print(config)
+    zero_model = BertForSequenceClassification(config=config)
+    # model with all zero weights 
+    zero_model.init_weights()
+    zero_model.bert.encoder.update_bit(0)
+    model.bert.encoder.add_quantized_model(zero_model.bert.encoder)
+    load_quantized_model(32, 32)
+
+    
+    '''
+    shard_conf1 = [0] * 12
     #shard_conf1[3] = 6 
     #shard_conf1[0] = 6 
     for i in range(12):
         model.bert.encoder.layer[i].attention.patch_attention_shards(shard_conf1)
         model.bert.encoder.layer[i].intermediate.patch_intermediate_shards(shard_conf1)
         model.bert.encoder.layer[i].output.patch_ffn_shards(shard_conf1)
+    '''
 
 
     #print(model.bert.encoder.quantized)
@@ -440,27 +453,34 @@ def main():
     return
     '''
     def write_to_results(s):
-        output_eval_file = os.path.join(eval_output_dir, "eval_results_{0}.txt".format(eval_task))
+        eval_output_dir = os.path.join(args.output_dir,
+                                       args.model_type + '_' + args.width_mult + '_' + args.depth_mult + '_eval')
+        output_eval_file = os.path.join(eval_output_dir, "eval_results_{0}.txt".format("ablation"))
         with open(output_eval_file, "a") as writer:
             writer.write(s)
             writer.write('\n')
 
+    write_to_results("test")
 
-    for i in range(0, 12):
-        shard_conf2 = [2] * 12
-        shard_conf2[i] = 6
-        model.bert.encoder.layer[11].attention.patch_attention_shards(shard_conf2)
-        model.bert.encoder.layer[11].intermediate.patch_intermediate_shards(shard_conf2)
-        model.bert.encoder.layer[11].output.patch_ffn_shards(shard_conf2)
+    # ablation study of shard importance 
+    for l in range(0, 12):
+        for i in range(0, 12):
+            shard_conf2 = [32] * 12
+            shard_conf2[i] = 0
+            model.bert.encoder.layer[l].attention.patch_attention_shards(shard_conf2)
+            model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(shard_conf2)
+            model.bert.encoder.layer[l].output.patch_ffn_shards(shard_conf2)
 
-        model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
-        model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
+            model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
+            model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
 
-        results = evaluate(args, model, tokenizer)
-        print(shard_conf2)
-        print(results)
-        print("emb bits:", args)
-        print("enc bits:", enc_bits)
+            results = evaluate(args, model, tokenizer)
+            print(shard_conf2)
+            print(results)
+            print("emb bits:", args)
+            print("enc bits:", enc_bits)
+            output = "%s: (%d,%d)" % (results, i, l)
+            write_to_results(output)
 
 
     '''

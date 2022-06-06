@@ -20,4 +20,5 @@ with open('./eval_results_ablation_upgrade.txt', 'r') as f:
 #ax = sns.heatmap(data, cmap="YlGnBu")
 ax = sns.heatmap(data)
 fig = ax.get_figure()
-fig.savefig('/mnt/e/importance_map_upgrade.png')
+#fig.savefig('/mnt/e/importance_map_upgrade.png')
+fig.savefig('./importance_map_upgrade.png')

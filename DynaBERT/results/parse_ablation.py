@@ -9,7 +9,7 @@ pattern = ".*: (0.*)\}: \(([0-9]*),([0-9]*)\)"
 pattern = re.compile(pattern)
 data = np.empty((12, 12))
 
-with open('./eval_results_ablation.txt', 'r') as f:
+with open('./eval_results_ablation_upgrade.txt', 'r') as f:
     for line in f:
         line = line.strip()
         res = pattern.match(line)
@@ -20,4 +20,4 @@ with open('./eval_results_ablation.txt', 'r') as f:
 #ax = sns.heatmap(data, cmap="YlGnBu")
 ax = sns.heatmap(data)
 fig = ax.get_figure()
-fig.savefig('/mnt/e/importance_map.png')
+fig.savefig('/mnt/e/importance_map_upgrade.png')

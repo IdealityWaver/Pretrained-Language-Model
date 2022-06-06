@@ -421,6 +421,7 @@ def main():
     zero_model.bert.encoder.update_bit(0)
     model.bert.encoder.add_quantized_model(zero_model.bert.encoder)
     load_quantized_model(32, 32)
+    load_quantized_model(2)
 
     
     '''
@@ -455,7 +456,7 @@ def main():
     def write_to_results(s):
         eval_output_dir = os.path.join(args.output_dir,
                                        args.model_type + '_' + args.width_mult + '_' + args.depth_mult + '_eval')
-        output_eval_file = os.path.join(eval_output_dir, "eval_results_{0}.txt".format("ablation"))
+        output_eval_file = os.path.join(eval_output_dir, "eval_results_{0}.txt".format("ablation_upgrade"))
         with open(output_eval_file, "a") as writer:
             writer.write(s)
             writer.write('\n')
@@ -463,10 +464,17 @@ def main():
     write_to_results("test")
 
     # ablation study of shard importance 
+    base_conf  = [2]*12
     for l in range(0, 12):
         for i in range(0, 12):
+            '''
             shard_conf2 = [32] * 12
             shard_conf2[i] = 0
+            '''
+
+            shard_conf2 = [2] * 12
+            shard_conf2[i] = 32 
+
             model.bert.encoder.layer[l].attention.patch_attention_shards(shard_conf2)
             model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(shard_conf2)
             model.bert.encoder.layer[l].output.patch_ffn_shards(shard_conf2)
@@ -481,6 +489,13 @@ def main():
             print("enc bits:", enc_bits)
             output = "%s: (%d,%d)" % (results, i, l)
             write_to_results(output)
+        # reset prev layer before proceeding to the next
+        model.bert.encoder.layer[l].attention.patch_attention_shards(base_conf)
+        model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(base_conf)
+        model.bert.encoder.layer[l].output.patch_ffn_shards(base_conf)
+
+
+            
 
 
     '''

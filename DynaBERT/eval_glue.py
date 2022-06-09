@@ -390,7 +390,7 @@ def main():
     tokenizer = tokenizer_class.from_pretrained(args.model_dir, do_lower_case=args.do_lower_case)
     model = model_class.from_pretrained(args.model_dir, config=config)
     model.to(args.device)
-    model.bert.encoder.update_bit(32)
+    model.bert.encoder.update_bit(args.enc)
 
     # load 2 - 6 bits
     models = []
@@ -410,10 +410,13 @@ def main():
         #print(model.bert.encoder.layer[0].attention.self.attention_head_size)
         return _model
 
-    '''
+    """
     for bit in enc_bits:
         m  = load_quantized_model(bit)
-    '''
+    """
+    m  = load_quantized_model(2)
+    m  = load_quantized_model(6)
+
     print(config)
     zero_model = BertForSequenceClassification(config=config)
     # model with all zero weights 
@@ -421,7 +424,6 @@ def main():
     zero_model.bert.encoder.update_bit(0)
     model.bert.encoder.add_quantized_model(zero_model.bert.encoder)
     load_quantized_model(32, 32)
-    load_quantized_model(2)
 
     
     '''
@@ -461,8 +463,10 @@ def main():
             writer.write(s)
             writer.write('\n')
 
-    write_to_results("test")
+    write_to_results("eval begin...")
 
+
+    """
     # ablation study of shard importance 
     base_conf  = [2]*12
     for l in range(0, 12):
@@ -493,9 +497,56 @@ def main():
         model.bert.encoder.layer[l].attention.patch_attention_shards(base_conf)
         model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(base_conf)
         model.bert.encoder.layer[l].output.patch_ffn_shards(base_conf)
+    """
 
+    # verify heuristics 
 
             
+    def patch_layer_shard(l, conf):
+        model.bert.encoder.layer[l].attention.patch_attention_shards(conf)
+        model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(conf)
+        model.bert.encoder.layer[l].output.patch_ffn_shards(conf)
+
+    def reset_model(bits):
+        conf = [bits]*12
+        for l in range(0, 12):
+            patch_layer_shard(l, conf)
+
+    # our heuristics: top 6 most important shards to 6-bit
+    # from downgrade map: (11, 3), (10, 1), (10, 4), (10, 6), (10, 8), (10, 9) ---> does not work
+    # from upgrade map: (0, 0), (0,3), (1, 5), (6, 1), (7, 0) (7, 8) ---> good performance
+    reset_model(2)
+    tmp_conf = [2]*12
+    tmp_conf[0] = 6
+    tmp_conf[3] = 6
+    patch_layer_shard(0, tmp_conf)
+    tmp_conf = [2]*12
+    tmp_conf[5] = 6
+    patch_layer_shard(1, tmp_conf)
+    tmp_conf = [2]*12
+    tmp_conf[1] = 6
+    patch_layer_shard(6, tmp_conf)
+    tmp_conf = [2]*12
+    tmp_conf[0] = 6
+    tmp_conf[8] = 6
+    patch_layer_shard(7, tmp_conf)
+    results = evaluate(args, model, tokenizer)
+    output = "ours: %s" % (results)
+    write_to_results(output)
+    return
+
+    #tmp_conf = [6, 6, 6, 6, 6, 6, 2, 2, 2, 2, 2, 2] 
+    tmp_conf = [2, 2, 2, 2, 2, 2, 6, 6, 6, 6, 6, 6] 
+    #tmp_conf = [2]*12 
+    #tmp_conf[3] = 6
+    patch_layer_shard(0, tmp_conf)
+    #tmp_conf = [2, 6, 2, 2, 6, 2, 6, 2, 6, 6, 2, 2]
+    #patch_layer_shard(10, tmp_conf)
+    results = evaluate(args, model, tokenizer)
+    output = "ours: %s" % (results)
+    write_to_results(output)
+    #reset_model(args.enc)
+    #results = evaluate(args, model, tokenizer)
 
 
     '''

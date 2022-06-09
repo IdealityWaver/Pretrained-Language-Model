@@ -37,6 +37,6 @@ python eval_glue.py \
        	--output_dir /tmp \
        	--depth_mult 1 \
 	--width_mult 1 \
-	--emb 3 \
-	--enc 2
+	--emb 32 \
+	--enc 32 
 

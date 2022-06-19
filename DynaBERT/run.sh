@@ -29,11 +29,11 @@ done
 #--model_dir ./models/${TASK} \
 python eval_glue.py \
 	--model_type bert \
-	--per_gpu_eval_batch_size 128 \
+	--per_gpu_eval_batch_size 16 \
        	--task_name ${TASK} \
 	--data_dir ../../${TASK}/ \
        	--max_seq_length 128 \
-	--model_dir /home/lwg/models/${TASK} \
+	--model_dir ../../models/${TASK} \
        	--output_dir /tmp \
        	--depth_mult 1 \
 	--width_mult 1 \

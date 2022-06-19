@@ -358,10 +358,11 @@ def main():
     #bits_conf = ''
     model_root = args.model_dir
     args.model_dir = os.path.join(args.model_dir, bits_conf)
-    #device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    #device = torch.device("cpu")
     args.n_gpu = torch.cuda.device_count()
     args.device = device
+    torch.cuda.empty_cache()
 
     # Setup logging
     logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',

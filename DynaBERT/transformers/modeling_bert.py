@@ -597,6 +597,7 @@ class BertAttention(nn.Module):
                     src = self.quantized[bit].self.value
                 elif key == 'o':
                     src = self.quantized[bit].output.dense
+                index = index.to(src.weight.device)
                 src_w = src.weight.index_select(dim, index).clone().detach()
                 if dst.bias is not None:
                     src_b = src.bias[index].clone().detach()
@@ -653,6 +654,7 @@ class BertIntermediate(nn.Module):
                     print("XXXXXXXX requested %d bit not loaded yet!!" % (bit))
                 index = torch.arange(idx * a, (idx + 1) * a)
                 src = self.quantized[bit].dense
+                index = index.to(src.weight.device)
                 src_w = src.weight.index_select(dim, index).clone().detach()
                 if dst.bias is not None:
                     src_b = src.bias[index].clone().detach()
@@ -713,6 +715,7 @@ class BertOutput(nn.Module):
                     print("XXXXXXXX requested %d bit not loaded yet!!" % (bit))
                 index = torch.arange(idx * a, (idx + 1) * a)
                 src = self.quantized[bit].dense
+                index = index.to(src.weight.device)
                 src_w = src.weight.index_select(dim, index).clone().detach()
                 if dst.bias is not None:
                     src_b = src.bias[index].clone().detach()

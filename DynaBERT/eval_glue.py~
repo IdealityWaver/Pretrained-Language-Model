@@ -360,7 +360,7 @@ def main():
     model_root = args.model_dir
     args.model_dir = os.path.join(args.model_dir, bits_conf)
     # lwg: choose spare GPU on the server....
-    device = torch.device("cuda:2" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device("cuda:3" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     #device = torch.device("cpu")
     args.n_gpu = torch.cuda.device_count()
     args.device = device
@@ -566,12 +566,13 @@ def main():
     #write_to_results('vanilla dyna quant..')
     npp_quant=[(8.0, 3.0), (12.0, 4.0), (12.0, 8.0), (12.0, 12.0), (12.0, 12.0)]
     #reset_model(2)
+    ddl = [300, 600, 900, 1200, 5000]
     model_conf = npp_quant 
     write_to_results('ours')
-    submodel = plan(300)
-    for conf in model_conf:
+    for idx, conf in enumerate(model_conf):
         depth_mult = conf[0]/12.0
         width_mult = conf[1]/12.0
+        submodel = plan(ddl[idx], int(conf[0]), int(conf[1]))
         for i in range(submodel.shape[0]):
             patch_layer_shard(i, submodel[i])
 
@@ -580,9 +581,10 @@ def main():
 
         results = evaluate(args, model, tokenizer)
         print(results)
-        output = "%s, %s, (emb: %d, activations: %d)" % (results, str(conf), args.emb, args.enc)
+        output = "T= %d: %s, %s, (emb: %d, activations: %d)" % (ddl[idx], results, str(conf), args.emb, args.enc)
         print(output)
         write_to_results(output)
+        write_to_results("%s" % (str(submodel)))
     write_to_results('eval ends...')
 
     ''' orig, for reference

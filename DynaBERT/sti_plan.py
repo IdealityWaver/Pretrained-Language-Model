@@ -48,12 +48,12 @@ def init_hw_prof():
         hw_prof['comp'][num] = hw_prof['comp'][num] + num * decomp_shard
     return hw_prof
 
-# a set of preload shards in MB
-def init_preload_shard(size):
+# m 6-bit preload shards enough for one layer
+def init_preload_shard(m):
     s = set()
-    s.add(shard(0, 0, 6)) 
-    s.add(shard(0, 1, 6)) 
-    s.add(shard(0, 2, 6)) 
+    for i in range(m): 
+        _s = shard(0, i, 6)
+        s.add(_s)
     return s
 
 def get_comp(hw_prof, num_shards):
@@ -142,7 +142,7 @@ def plan_io(n, m, preload_buf, hw_prof, shard_prof):
     target_fidel = 6
     ranked_importance = np.dstack(np.unravel_index(np.argsort(shard_prof.ravel()), (12, 12)))[0][::-1]
     for s in ranked_importance:
-        print(shard_prof[s[0], s[1]])
+        # print(shard_prof[s[0], s[1]])
         s_n = s[0]
         s_m = s[1]
         # in the submodel we care about
@@ -174,7 +174,6 @@ def plan_io(n, m, preload_buf, hw_prof, shard_prof):
                 if check_aibs(n, aibs) == 1:
                     print("AIBs used up, return submodel")
                     return submodel
-    print(submodel)
     return submodel
 
 def read_shard_importance(path):
@@ -193,22 +192,27 @@ def read_shard_importance(path):
 
 
 
-def _plan(ddl, buf, hw_prof, shard_prof):
+def _plan(ddl, buf, hw_prof, shard_prof, n, m):
     # compute planning: get n x m submodel  
-    (n, m) = plan_compute(ddl, hw_prof)
-    print(n, m)
+    if n == 0 and m == 0:
+        (n, m) = plan_compute(ddl, hw_prof)
+        print("compute planning: n = %d, m = %d" % (n, m))
+    else:
+        print("using supplied n = %d, m = %d" % (n, m))
     # io planning: fill in the submodel w/ optimal fidelity
-    conf = plan_io(8, 3, buf, hw_prof, shard_prof)
+    conf = plan_io(n, m, buf, hw_prof, shard_prof)
     return conf
 
 
-def plan(ddl):
+def plan(ddl, n=0, m=0):
     shard_prof = read_shard_importance('./ablation_upgrade.txt')
     hw_prof = init_hw_prof()
-    preload_shard = init_preload_shard(10)
-    submodel = _plan(ddl, preload_shard, hw_prof, shard_prof)
-    for i in range(submodel.shape[0]):
-        print(submodel[i])
+    preload_shard = init_preload_shard(m)
+    submodel = _plan(ddl, preload_shard, hw_prof, shard_prof, n, m)
+    print("final model:")
+    a = "%s" % (str(submodel))
+    print(a)
+    print(submodel)
     return submodel
 
-plan(300)
+plan(300, 8, 3)

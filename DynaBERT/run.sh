@@ -37,7 +37,7 @@ python eval_glue.py \
 	--data_dir ../../glue_data/${TASK}/ \
        	--max_seq_length 128 \
 	--model_dir ../../models/${TASK} \
-       	--output_dir /tmp \
+       	--output_dir ../../results \
        	--depth_mult 0.25 \
 	--width_mult 0.25 \
 	--emb 32 \

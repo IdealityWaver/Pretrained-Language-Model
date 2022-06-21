@@ -175,7 +175,7 @@ def plan_io(n, m, preload_buf, hw_prof, shard_prof):
                     print("AIBs used up, return submodel")
                     return submodel
     print(submodel)
-    return
+    return submodel
 
 def read_shard_importance(path):
     import re
@@ -193,15 +193,22 @@ def read_shard_importance(path):
 
 
 
-def plan(ddl, buf, hw_prof, shard_prof):
+def _plan(ddl, buf, hw_prof, shard_prof):
     # compute planning: get n x m submodel  
     (n, m) = plan_compute(ddl, hw_prof)
     print(n, m)
     # io planning: fill in the submodel w/ optimal fidelity
     conf = plan_io(8, 3, buf, hw_prof, shard_prof)
+    return conf
 
 
-shard_prof = read_shard_importance('./ablation_upgrade.txt')
-hw_prof = init_hw_prof()
-preload_shard = init_preload_shard(10)
-plan(300, preload_shard, hw_prof, shard_prof)
+def plan(ddl):
+    shard_prof = read_shard_importance('./ablation_upgrade.txt')
+    hw_prof = init_hw_prof()
+    preload_shard = init_preload_shard(10)
+    submodel = _plan(ddl, preload_shard, hw_prof, shard_prof)
+    for i in range(submodel.shape[0]):
+        print(submodel[i])
+    return submodel
+
+plan(300)

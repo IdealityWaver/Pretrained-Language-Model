@@ -41,6 +41,7 @@ from transformers import glue_output_modes as output_modes
 from transformers import glue_processors as processors
 from transformers import glue_convert_examples_to_features as convert_examples_to_features
 
+from sti_plan import plan
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +360,7 @@ def main():
     model_root = args.model_dir
     args.model_dir = os.path.join(args.model_dir, bits_conf)
     # lwg: choose spare GPU on the server....
-    device = torch.device("cuda:3" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device("cuda:2" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     #device = torch.device("cpu")
     args.n_gpu = torch.cuda.device_count()
     args.device = device
@@ -521,7 +522,8 @@ def main():
     # from downgrade map: (11, 3), (10, 1), (10, 4), (10, 6), (10, 8), (10, 9) ---> does not work
     # from upgrade map: (0, 0), (0,3), (1, 5), (6, 1), (7, 0) (7, 8) ---> good performance
 
-    reset_model(6)
+    '''
+    #reset_model(6)
     tmp_conf = [2]*12
     tmp_conf[0] = 6
     tmp_conf[3] = 6
@@ -554,8 +556,36 @@ def main():
     #reset_model(args.enc)
     #results = evaluate(args, model, tokenizer)
 
-
     '''
+
+    # '''
+    #vanilla_dyna = [(3.0, 3.0), (5.0, 3.0), (7.0, 3.0), (9.0, 3.0), (12.0, 12.0)]
+    #vanilla_dyna = [(2.0, 4.0), (4.0, 4.0), (6.0, 4.0), (8.0, 4.0), (12.0, 12.0)]
+    #vanilla_dyna_quant = [(6.0, 3.0), (12.0, 3.0), (12.0, 5.0), (12.0, 8.0), (12.0, 12.0)]
+    #model_conf = vanilla_dyna_quant 
+    #write_to_results('vanilla dyna quant..')
+    npp_quant=[(8.0, 3.0), (12.0, 4.0), (12.0, 8.0), (12.0, 12.0), (12.0, 12.0)]
+    #reset_model(2)
+    model_conf = npp_quant 
+    write_to_results('ours')
+    submodel = plan(300)
+    for conf in model_conf:
+        depth_mult = conf[0]/12.0
+        width_mult = conf[1]/12.0
+        for i in range(submodel.shape[0]):
+            patch_layer_shard(i, submodel[i])
+
+        model.apply(lambda m: setattr(m, 'depth_mult', float(depth_mult)))
+        model.apply(lambda m: setattr(m, 'width_mult', float(width_mult)))
+
+        results = evaluate(args, model, tokenizer)
+        print(results)
+        output = "%s, %s, (emb: %d, activations: %d)" % (results, str(conf), args.emb, args.enc)
+        print(output)
+        write_to_results(output)
+    write_to_results('eval ends...')
+
+    ''' orig, for reference
     model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
     model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
 
@@ -563,8 +593,10 @@ def main():
     print(results)
     print("emb bits:", args)
     print("enc bits:", enc_bits)
-    print(shard_conf1)
-    '''
+    write_to_results(output)
+
+    # print(shard_conf1)
+    # '''
 
 
 if __name__ == "__main__":

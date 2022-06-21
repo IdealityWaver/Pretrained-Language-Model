@@ -359,7 +359,7 @@ def main():
     model_root = args.model_dir
     args.model_dir = os.path.join(args.model_dir, bits_conf)
     # lwg: choose spare GPU on the server....
-    device = torch.device("cuda:1" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+    device = torch.device("cuda:3" if torch.cuda.is_available() and not args.no_cuda else "cpu")
     #device = torch.device("cpu")
     args.n_gpu = torch.cuda.device_count()
     args.device = device
@@ -520,21 +520,22 @@ def main():
     # our heuristics: top 6 most important shards to 6-bit
     # from downgrade map: (11, 3), (10, 1), (10, 4), (10, 6), (10, 8), (10, 9) ---> does not work
     # from upgrade map: (0, 0), (0,3), (1, 5), (6, 1), (7, 0) (7, 8) ---> good performance
-    reset_model(2)
+
+    reset_model(6)
     tmp_conf = [2]*12
     tmp_conf[0] = 6
     tmp_conf[3] = 6
-    patch_layer_shard(0, tmp_conf)
+    # patch_layer_shard(0, tmp_conf)
     tmp_conf = [2]*12
     tmp_conf[5] = 6
-    patch_layer_shard(1, tmp_conf)
+    # patch_layer_shard(1, tmp_conf)
     tmp_conf = [2]*12
     tmp_conf[1] = 6
-    patch_layer_shard(6, tmp_conf)
+    # patch_layer_shard(6, tmp_conf)
     tmp_conf = [2]*12
     tmp_conf[0] = 6
     tmp_conf[8] = 6
-    patch_layer_shard(7, tmp_conf)
+    # patch_layer_shard(7, tmp_conf)
     results = evaluate(args, model, tokenizer)
     output = "ours: %s" % (results)
     write_to_results(output)

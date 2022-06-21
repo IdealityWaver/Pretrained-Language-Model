@@ -1,9 +1,14 @@
 #!/bin/bash
 #python eval_glue.py --model_type bert  --per_gpu_eval_batch_size 1 --task_name SST-2 --data_dir ~/odroid/SST-2/ --max_seq_length 128 --model_dir ./models/SST-2 --output_dir /tmp --depth_mult 1 --width_mult 0.5
-TASK=SST-2
+#TASK=SST-2
 #TASK=STS-B
 #TASK=MNLI
-#for ((emb = 1; emb <= 5; emb++))
+#TASK=RTE
+#TASK=MRPC # --- missing dev.csv
+#TASK=CoLA
+#TASK=QQP
+TASK=QNLI
+#for ((emb = 1; emb <= 5; emb++))RTE
 
 #for ((emb = 3; emb < 4; emb++))
 #do 
@@ -29,7 +34,7 @@ python eval_glue.py \
 	--model_type bert \
 	--per_gpu_eval_batch_size 16 \
        	--task_name ${TASK} \
-	--data_dir ../../${TASK}/ \
+	--data_dir ../../glue_data/${TASK}/ \
        	--max_seq_length 128 \
 	--model_dir ../../models/${TASK} \
        	--output_dir /tmp \

@@ -417,15 +417,18 @@ def main():
     for bit in enc_bits:
         m  = load_quantized_model(bit)
     """
+    # m  = load_quantized_model(1)
     m  = load_quantized_model(2)
     m  = load_quantized_model(6)
 
+    '''
     print(config)
     zero_model = BertForSequenceClassification(config=config)
     # model with all zero weights 
     zero_model.init_weights()
     zero_model.bert.encoder.update_bit(0)
     model.bert.encoder.add_quantized_model(zero_model.bert.encoder)
+    '''
     load_quantized_model(32, 32)
 
     
@@ -445,12 +448,15 @@ def main():
 
     '''
     # quantize then save the model...
+    emb_bits = 3
+    enc_bits = 1
     if emb_bits != 0:
-        model.bert.embeddings.quantize(emb_bits)
-    if enc_bits != 1:
+        print("continue...")
+        # model.bert.embeddings.quantize(emb_bits)
+    if enc_bits != 0:
         model.bert.encoder.quantize(enc_bits)
     # dir_format ~/models/#emb_#enc 
-    model_save_dir = os.path.join('/home/lwg/models/', str(emb_bits) + '_' + str(enc_bits))
+    model_save_dir = os.path.join('../../models/', str(emb_bits) + '_' + str(enc_bits))
     if not os.path.exists(model_save_dir):
                 # and args.local_rank in [-1, 0]:
             os.makedirs(model_save_dir)
@@ -458,30 +464,32 @@ def main():
     tokenizer.save_vocabulary(model_save_dir)
     return
     '''
+
     def write_to_results(s):
         eval_output_dir = os.path.join(args.output_dir,
                                        args.model_type + '_' + args.width_mult + '_' + args.depth_mult + '_eval')
         if not os.path.exists(eval_output_dir):
                 # and args.local_rank in [-1, 0]:
             os.makedirs(eval_output_dir)
-        output_eval_file = os.path.join(eval_output_dir, "eval_results_{0}.txt".format("ablation_upgrade"))
+        #output_eval_file = os.path.join(eval_output_dir, "{0}_prof.txt".format("ablation_upgrade"))
+        output_eval_file = os.path.join(eval_output_dir, "{0}_ours.txt".format(args.task_name))
         with open(output_eval_file, "a") as writer:
             writer.write(s)
             writer.write('\n')
 
-    write_to_results("eval begin...")
+    write_to_results("%s eval begin..." % args.task_name)
 
+    def patch_layer_shard(l, conf):
+        model.bert.encoder.layer[l].attention.patch_attention_shards(conf)
+        model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(conf)
+        model.bert.encoder.layer[l].output.patch_ffn_shards(conf)
 
-    """
+    '''
     # ablation study of shard importance 
+    write_to_results("ablation_upgrade")
     base_conf  = [2]*12
     for l in range(0, 12):
         for i in range(0, 12):
-            '''
-            shard_conf2 = [32] * 12
-            shard_conf2[i] = 0
-            '''
-
             shard_conf2 = [2] * 12
             shard_conf2[i] = 32 
 
@@ -489,8 +497,8 @@ def main():
             model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(shard_conf2)
             model.bert.encoder.layer[l].output.patch_ffn_shards(shard_conf2)
 
-            model.apply(lambda m: setattr(m, 'depth_mult', float(args.depth_mult)))
-            model.apply(lambda m: setattr(m, 'width_mult', float(args.width_mult)))
+            model.apply(lambda m: setattr(m, 'depth_mult', float(1.0)))
+            model.apply(lambda m: setattr(m, 'width_mult', float(1.0)))
 
             results = evaluate(args, model, tokenizer)
             print(shard_conf2)
@@ -500,18 +508,14 @@ def main():
             output = "%s: (%d,%d)" % (results, i, l)
             write_to_results(output)
         # reset prev layer before proceeding to the next
-        model.bert.encoder.layer[l].attention.patch_attention_shards(base_conf)
-        model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(base_conf)
-        model.bert.encoder.layer[l].output.patch_ffn_shards(base_conf)
-    """
+        patch_layer_shard(l, base_conf)
+    write_to_results("ablation_upgrade end")
+    return
+    '''
 
     # verify heuristics 
 
             
-    def patch_layer_shard(l, conf):
-        model.bert.encoder.layer[l].attention.patch_attention_shards(conf)
-        model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(conf)
-        model.bert.encoder.layer[l].output.patch_ffn_shards(conf)
 
     def reset_model(bits):
         conf = [bits]*12
@@ -559,32 +563,43 @@ def main():
     '''
 
     # '''
-    #vanilla_dyna = [(3.0, 3.0), (5.0, 3.0), (7.0, 3.0), (9.0, 3.0), (12.0, 12.0)]
-    #vanilla_dyna = [(2.0, 4.0), (4.0, 4.0), (6.0, 4.0), (8.0, 4.0), (12.0, 12.0)]
     #vanilla_dyna_quant = [(6.0, 3.0), (12.0, 3.0), (12.0, 5.0), (12.0, 8.0), (12.0, 12.0)]
-    #model_conf = vanilla_dyna_quant 
+    # model_conf = vanilla_dyna_quant 
     #write_to_results('vanilla dyna quant..')
-    npp_quant=[(8.0, 3.0), (12.0, 4.0), (12.0, 8.0), (12.0, 12.0), (12.0, 12.0)]
-    #reset_model(2)
-    ddl = [300, 600, 900, 1200, 5000]
-    model_conf = npp_quant 
-    write_to_results('ours')
-    for idx, conf in enumerate(model_conf):
-        depth_mult = conf[0]/12.0
-        width_mult = conf[1]/12.0
-        submodel = plan(ddl[idx], int(conf[0]), int(conf[1]))
-        for i in range(submodel.shape[0]):
-            patch_layer_shard(i, submodel[i])
+    vanilla_dyna = [(3.0, 3.0), (5.0, 3.0), (7.0, 3.0), (9.0, 3.0)]
+    npp_quant=[(8.0, 3.0), (12.0, 4.0), (12.0, 8.0), (12.0, 12.0)]
+    ddl = [300, 600, 900, 1200]
+    baselines = {
+            # 'vanilla_dyna': {'submodel': vanilla_dyna, 'bits':32}, 
+            # 'npp_quant_2': {'submodel': npp_quant, 'bits': 2},
+            # 'dyna_in_mem': {'submodel': npp_quant, 'bits': 32}, 
+            # 'dyna_in_mem_2': {'submodel': npp_quant, 'bits': 2},
+            # 'dyna_in_mem_6': {'submodel': npp_quant, 'bits': 6},
+            'ours': {'submodel': npp_quant, 'bits':32}}
+    write_to_results('vanilla_dyna')
+    for k in baselines.keys():
+        baseline = baselines[k]
+        model_conf = baseline['submodel']
+        fixed_bits = baseline['bits']
+        reset_model(fixed_bits)
+        write_to_results(k)
+        for idx, conf in enumerate(model_conf):
+            depth_mult = conf[0]/12.0
+            width_mult = conf[1]/12.0
+            if 'ours' in k:
+                submodel = plan(ddl[idx], args.task_name, int(conf[0]), int(conf[1]))
+                write_to_results("%s" % (str(submodel)))
+                for i in range(submodel.shape[0]):
+                    patch_layer_shard(i, submodel[i])
 
-        model.apply(lambda m: setattr(m, 'depth_mult', float(depth_mult)))
-        model.apply(lambda m: setattr(m, 'width_mult', float(width_mult)))
+            model.apply(lambda m: setattr(m, 'depth_mult', float(depth_mult)))
+            model.apply(lambda m: setattr(m, 'width_mult', float(width_mult)))
 
-        results = evaluate(args, model, tokenizer)
-        print(results)
-        output = "T= %d: %s, %s, (emb: %d, activations: %d)" % (ddl[idx], results, str(conf), args.emb, args.enc)
-        print(output)
-        write_to_results(output)
-        write_to_results("%s" % (str(submodel)))
+            results = evaluate(args, model, tokenizer)
+            print(results)
+            output = "T= %d: %s, %s, (emb: %d, activations: %d)" % (ddl[idx], results, str(conf), args.emb, args.enc)
+            print(output)
+            write_to_results(output)
     write_to_results('eval ends...')
 
     ''' orig, for reference

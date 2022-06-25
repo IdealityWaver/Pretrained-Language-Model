@@ -104,11 +104,17 @@ def gobo_quantize(weights, o_idx, bits):
         bins.append(g_group[start])
     # boundary 
     bins.append(g_group[-1])
-    centroids.append(-99999.0) 
+    print("centroids boundary: ", bins)
+    #centroids.append(-99999.0) 
+    centroids.append(centroids[0]) 
+    print("centroids : ", centroids)
     centroids = np.array(centroids)
     # assign quantized values
     quantized = np.digitize(weights, bins, right = True) - 1 # return the idx of the centroids
     print("quantzied weights are:", quantized)
+    print("debug .....")
+    print(weights[:16])
+    print(quantized[:16])
     #save_weight_to_file('/tmp/weight', quantized)
     start = time.time()
     new_weights = centroids[quantized]
@@ -119,10 +125,10 @@ def gobo_quantize(weights, o_idx, bits):
     print("centroids size: " , centroids.shape)
     print("quantized weight size: ", quantized.shape)
     print("original weight size: ", weights.size())
-    # sanity check manually patch some values...
+    # sanity check manually patch some boundary values...
     for idx,d in enumerate(new_weights):
         if d < -100.0:
-            print(idx, weights[idx],"fail to be binned??")
+            print(idx, weights[idx],"fail to be binned?? new_weight =", new_weights[idx])
             # there are values that are not in outlier idx 
             if idx not in o_idx:
                 new_weights[idx] = centroids[0]

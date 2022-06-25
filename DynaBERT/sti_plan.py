@@ -181,10 +181,12 @@ def read_shard_importance(path):
     pattern = ".*: (0.*)\}: \(([0-9]*),([0-9]*)\)"
     pattern = re.compile(pattern)
     prof = np.zeros(shape=(12, 12))
-    with open('./ablation_upgrade.txt', 'r') as f:
+    with open(path, 'r') as f:
         for line in f:
             line = line.strip()
             res = pattern.match(line)
+            if res == None:
+                continue
             acc, m, n = float(res[1]), int(res[2]), int(res[3])
             prof[n, m] = acc
     print("Successfully read in shard importance profile...")
@@ -204,8 +206,8 @@ def _plan(ddl, buf, hw_prof, shard_prof, n, m):
     return conf
 
 
-def plan(ddl, n=0, m=0):
-    shard_prof = read_shard_importance('./ablation_upgrade.txt')
+def plan(ddl, task, n=0, m=0):
+    shard_prof = read_shard_importance('../../shard_importance/{0}_prof.txt'.format(task))
     hw_prof = init_hw_prof()
     preload_shard = init_preload_shard(m)
     submodel = _plan(ddl, preload_shard, hw_prof, shard_prof, n, m)
@@ -215,4 +217,4 @@ def plan(ddl, n=0, m=0):
     print(submodel)
     return submodel
 
-plan(300, 8, 3)
+plan(300, 'qqp', 8, 3)

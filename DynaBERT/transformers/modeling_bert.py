@@ -77,11 +77,12 @@ def detect_outliers(weights):
 
 
 def gather_layer_weights(layer):
-    weights = torch.Tensor([]) 
+    weights = torch.Tensor([])
     # original dimension and pointer address to restore to
     orig = []
     for name, param in layer.named_parameters():
         if param.requires_grad:
+            weights = weights.to(param.data.device)
             orig.append((param, name))
             weights = torch.cat([weights, torch.flatten(param.data)])
     return weights, orig 
@@ -125,6 +126,7 @@ def gobo_quantize(weights, o_idx, bits):
     print("centroids size: " , centroids.shape)
     print("quantized weight size: ", quantized.shape)
     print("original weight size: ", weights.size())
+    #print("outlier size: ", len(o_idx))
     # sanity check manually patch some boundary values...
     for idx,d in enumerate(new_weights):
         if d < -100.0:
@@ -146,6 +148,7 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
     weights, orig_param = gather_layer_weights(layer)
     if detect_o:
         o_group, o_idx = detect_outliers(weights)
+        print("o_group = %d" % (len(o_group)))
     else:
         o_idx = []
     new_weights = quantize_f(weights, o_idx, bits)
@@ -200,7 +203,7 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
     # print("time to restore compressed weights:", (end - start)*1000)
     # sanity check, all outliers must be preserved 
     assert o_count == len(o_group)
-    return
+    return o_count
 
 
 def save_weight_to_file(filename, weights):
@@ -817,11 +820,16 @@ class BertEncoder(nn.Module):
     def quantize(self, bits):
         #for i in range(6, 12):
         #for i in np.random.choice(12, 6, replace=False):
+        outliers = 0
         for i in range(len(self.layer)):
             print("quantizing ", i)
             #gobo_quantize_one_layer(self.layer[i], 6)
             #kmeans_quantize_one_layer(self.layer[i], 3)
-            _quantize(self.layer[i], gobo_quantize, True, bits)
+            outliers += _quantize(self.layer[i], gobo_quantize, True, bits)
+            print("outliers = %d" % outliers)
+
+        print("------------------  outliers: {:.3%}".format(outliers/(7087872*12.0)))
+        #print("------------------  outliers: %d" % outliers)
 
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None):
@@ -837,6 +845,8 @@ class BertEncoder(nn.Module):
         # (0,2,4,6,8,10)
         for i in range(depth):
             kept_layers_index.append(math.floor(i/self.depth_mult))
+
+        print("keeping...", kept_layers_index)
 
         for i in kept_layers_index:
             layer_module = self.layer[i]

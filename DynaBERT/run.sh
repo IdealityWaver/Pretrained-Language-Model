@@ -32,7 +32,7 @@ TASK=QQP
 #--model_dir ./models/${TASK} \
 python eval_glue.py \
 	--model_type bert \
-	--per_gpu_eval_batch_size 4 \
+	--per_gpu_eval_batch_size 16 \
        	--task_name ${TASK} \
 	--data_dir ../../glue_data/${TASK}/ \
        	--max_seq_length 128 \

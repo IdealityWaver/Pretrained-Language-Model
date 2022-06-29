@@ -413,12 +413,31 @@ def main():
         #print(model.bert.encoder.layer[0].attention.self.attention_head_size)
         return _model
 
+    '''
+    # quantize then save the model...
+    emb_bits = 3
+    enc_bits = 2
+    if emb_bits != 0:
+        print("continue...")
+        #model.bert.embeddings.quantize(emb_bits)
+    if enc_bits != 0:
+        model.bert.encoder.quantize(enc_bits)
+    # dir_format ~/models/#emb_#enc 
+    model_save_dir = os.path.join('../../models/', str(emb_bits) + '_' + str(enc_bits))
+    if not os.path.exists(model_save_dir):
+            os.makedirs(model_save_dir)
+    #model.save_pretrained(model_save_dir)
+    #tokenizer.save_vocabulary(model_save_dir)
+    return
+    '''
+
     """
     for bit in enc_bits:
         m  = load_quantized_model(bit)
     """
     # m  = load_quantized_model(1)
     m  = load_quantized_model(2)
+    m  = load_quantized_model(4)
     m  = load_quantized_model(6)
 
     '''
@@ -446,24 +465,6 @@ def main():
     #print(model.bert.encoder.quantized)
     #return
 
-    '''
-    # quantize then save the model...
-    emb_bits = 3
-    enc_bits = 1
-    if emb_bits != 0:
-        print("continue...")
-        # model.bert.embeddings.quantize(emb_bits)
-    if enc_bits != 0:
-        model.bert.encoder.quantize(enc_bits)
-    # dir_format ~/models/#emb_#enc 
-    model_save_dir = os.path.join('../../models/', str(emb_bits) + '_' + str(enc_bits))
-    if not os.path.exists(model_save_dir):
-                # and args.local_rank in [-1, 0]:
-            os.makedirs(model_save_dir)
-    model.save_pretrained(model_save_dir)
-    tokenizer.save_vocabulary(model_save_dir)
-    return
-    '''
 
     def write_to_results(s):
         eval_output_dir = os.path.join(args.output_dir,
@@ -566,16 +567,24 @@ def main():
     #vanilla_dyna_quant = [(6.0, 3.0), (12.0, 3.0), (12.0, 5.0), (12.0, 8.0), (12.0, 12.0)]
     # model_conf = vanilla_dyna_quant 
     #write_to_results('vanilla dyna quant..')
-    vanilla_dyna = [(3.0, 3.0), (5.0, 3.0), (7.0, 3.0), (9.0, 3.0)]
-    npp_quant=[(8.0, 3.0), (12.0, 4.0), (12.0, 8.0), (12.0, 12.0)]
-    ddl = [300, 600, 900, 1200]
+    vanilla_dyna = [(1.0, 4.0), (1.0, 5.0), (3.0, 3.0), (5.0, 3.0)]
+    npp = [(1.0, 4.0), (1.0, 5.0), (3.0, 3.0), (7.0, 3.0)]
+    npp_quant_2 =[(3.0, 3.0), (4.0, 3.0), (10.0, 3.0), (12.0, 4.0)]
+    npp_quant_6 =[(3.0, 3.0), (4.0, 3.0), (10.0, 3.0), (12.0, 3.0)]
+    ours =[(3.0, 3.0), (5.0, 3.0), (10.0, 3.0), (12.0, 4.0)]
+
+    #ddl = [300, 600, 900, 1200]
+    ddl = [150, 200, 400, 600]
     baselines = {
             # 'vanilla_dyna': {'submodel': vanilla_dyna, 'bits':32}, 
-            # 'npp_quant_2': {'submodel': npp_quant, 'bits': 2},
-            # 'dyna_in_mem': {'submodel': npp_quant, 'bits': 32}, 
-            # 'dyna_in_mem_2': {'submodel': npp_quant, 'bits': 2},
-            # 'dyna_in_mem_6': {'submodel': npp_quant, 'bits': 6},
-            'ours': {'submodel': npp_quant, 'bits':32}}
+            # 'npp': {'submodel': npp, 'bits':32}, 
+            # 'npp_quant_2': {'submodel': npp_quant_2, 'bits': 2},
+            # 'npp_quant_6': {'submodel': npp_quant_6, 'bits': 6},
+            # 'dyna_in_mem': {'submodel': ours, 'bits': 32}, 
+            # 'dyna_in_mem_2': {'submodel': ours, 'bits': 2},
+    #        'dyna_in_mem_4': {'submodel': ours, 'bits': 4},
+            # 'dyna_in_mem_6': {'submodel': ours, 'bits': 6},
+            'ours': {'submodel': ours, 'bits':32}}
     write_to_results('vanilla_dyna')
     for k in baselines.keys():
         baseline = baselines[k]

@@ -52,7 +52,7 @@ def init_hw_prof():
 def init_preload_shard(m):
     s = set()
     for i in range(m): 
-        _s = shard(0, i, 6)
+        _s = shard(0, i, 2)
         s.add(_s)
     return s
 

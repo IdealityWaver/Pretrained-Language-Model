@@ -479,6 +479,9 @@ def main():
             writer.write('\n')
 
     write_to_results("%s eval begin..." % args.task_name)
+    from datetime import datetime
+    exp_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    write_to_results("%s" % exp_time)
 
     def patch_layer_shard(l, conf):
         model.bert.encoder.layer[l].attention.patch_attention_shards(conf)
@@ -567,24 +570,30 @@ def main():
     #vanilla_dyna_quant = [(6.0, 3.0), (12.0, 3.0), (12.0, 5.0), (12.0, 8.0), (12.0, 12.0)]
     # model_conf = vanilla_dyna_quant 
     #write_to_results('vanilla dyna quant..')
+
     vanilla_dyna = [(1.0, 4.0), (1.0, 5.0), (3.0, 3.0), (5.0, 3.0)]
     npp = [(1.0, 4.0), (1.0, 5.0), (3.0, 3.0), (7.0, 3.0)]
+
     npp_quant_2 =[(3.0, 3.0), (4.0, 3.0), (10.0, 3.0), (12.0, 4.0)]
+    #npp_quant_6 =[(3.0, 3.0), (4.0, 3.0), (9.0, 3.0), (12.0, 3.0)]
     npp_quant_6 =[(3.0, 3.0), (4.0, 3.0), (10.0, 3.0), (12.0, 3.0)]
     ours =[(3.0, 3.0), (5.0, 3.0), (10.0, 3.0), (12.0, 4.0)]
+    ours_tune = [ours[1]]
 
     #ddl = [300, 600, 900, 1200]
-    ddl = [150, 200, 400, 600]
+    #ddl = [150, 200, 400, 600]
+    ddl = [200]
     baselines = {
             # 'vanilla_dyna': {'submodel': vanilla_dyna, 'bits':32}, 
-            # 'npp': {'submodel': npp, 'bits':32}, 
+            # 'npp': {'submodel': npp, 'bits':32},
             # 'npp_quant_2': {'submodel': npp_quant_2, 'bits': 2},
             # 'npp_quant_6': {'submodel': npp_quant_6, 'bits': 6},
             # 'dyna_in_mem': {'submodel': ours, 'bits': 32}, 
             # 'dyna_in_mem_2': {'submodel': ours, 'bits': 2},
     #        'dyna_in_mem_4': {'submodel': ours, 'bits': 4},
             # 'dyna_in_mem_6': {'submodel': ours, 'bits': 6},
-            'ours': {'submodel': ours, 'bits':32}}
+            # 'ours': {'submodel': ours_tune, 'bits':32}}
+            'ours': {'submodel': ours_tune, 'bits':2}}
     write_to_results('vanilla_dyna')
     for k in baselines.keys():
         baseline = baselines[k]

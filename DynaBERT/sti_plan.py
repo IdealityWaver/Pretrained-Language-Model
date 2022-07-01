@@ -48,12 +48,25 @@ def init_hw_prof():
         hw_prof['comp'][num] = hw_prof['comp'][num] + num * decomp_shard
     return hw_prof
 
-# m 6-bit preload shards enough for one layer
-def init_preload_shard(m):
+# n, m: model size
+# s: number of bits 6-bit preload shards enough for one layer
+def init_preload_shard(n, m, size):
+    # size of a 6-bit shard
+    shard_sz = 0.45
+    # the buffer
     s = set()
-    for i in range(m): 
-        _s = shard(0, i, 2)
-        s.add(_s)
+    num_shards = size/shard_sz
+    if num_shards == 0: # M = 0
+        for i in range(m): 
+            _s = shard(0, i, 6)
+            s.add(_s)
+    else:
+        for i in range(n): 
+            for j in range(m): 
+                _s = shard(i, j, 6)
+                s.add(_s)
+                if len(s) == num_shards:
+                    return s
     return s
 
 def get_comp(hw_prof, num_shards):
@@ -99,26 +112,50 @@ def init_aibs(n, m, hw_prof, buf):
 def deduct_aib(curr, total_layers, t_io, aibs):
     for i in range(curr, total_layers):
         aibs[i] = aibs[i] - t_io
-        if aibs[i] < 0:
+        if aibs[i] < -0.1:
             print("Cannot deduct... aib[%d] negative!!" % (i))
 
 def can_deduct_aib(curr, total_layers, t_io, aibs):
     for i in range(curr, total_layers):
         tmp = aibs[i] - t_io
-        if tmp < 0:
+        if tmp < -0.1:
             return 0
             print("Cannot deduct... aib[%d] negative!!" % (i))
     return 1
 
 def check_aibs(n, aibs):
     for i in range(0, n):
-        if aibs[i] < 0:
+        if aibs[i] < -0.1:
             print("Constraints not satisfied!!")
             return 1 
     return 0
 
-def plan_io(n, m, preload_buf, hw_prof, shard_prof):
+
+# don't consider AIBs, etc...
+def plan_io_eval_importance(n, m, hw_prof, shard_prof):
+    submodel = np.full((n, m), 2)
+    to_upgrade = 1
+    ranked_importance = np.dstack(np.unravel_index(np.argsort(shard_prof.ravel()), (12, 12)))[0][::-1]
+    # np.random.shuffle(ranked_importance)
+    allocated = 0
+    for s in ranked_importance:
+        s_n = s[0]
+        s_m = s[1]
+        # in the submodel we care about
+        if s_n < n and s_m < m and allocated < to_upgrade:
+            submodel[s_n, s_m] = 32
+            allocated += 1
+    return submodel
+
+
+
+def plan_io(n, m, hw_prof, shard_prof):
     submodel = np.zeros(shape=(n, m))
+
+    #buf_size = m * 0.45 # the first layer shards...
+    buf_size = 0
+    preload_buf = init_preload_shard(n, m, buf_size)
+
     # initialize AIBs 
     aibs = init_aibs(n, m, hw_prof, preload_buf)
     print(aibs)
@@ -127,6 +164,7 @@ def plan_io(n, m, preload_buf, hw_prof, shard_prof):
         submodel[s.n, s.m] = s.b
         deduct_aib(s.n, n, get_io(hw_prof, s.b), aibs)
     print(submodel)
+    print(aibs)
     # Pass 1: try to fill the rest of model with lowest-bit shard possible
     # Why 2-bit but not highest-bit possible? 
     # Because we want to reserve enough room for important shards to have high fidelities
@@ -140,7 +178,12 @@ def plan_io(n, m, preload_buf, hw_prof, shard_prof):
     print(submodel)
     # Pass 2: try to allocate 6-bit fidelities to important shards
     target_fidel = 6
+    # ranked from most important to least important
     ranked_importance = np.dstack(np.unravel_index(np.argsort(shard_prof.ravel()), (12, 12)))[0][::-1]
+    # ranked from **least** important to most
+    # print("----------------------------------------- we are using least important shards!!!!!! ------------------- ")
+    #ranked_importance = np.dstack(np.unravel_index(np.argsort(shard_prof.ravel()), (12, 12)))[0]
+    #np.random.shuffle(ranked_importance)
     for s in ranked_importance:
         # print(shard_prof[s[0], s[1]])
         s_n = s[0]
@@ -150,8 +193,10 @@ def plan_io(n, m, preload_buf, hw_prof, shard_prof):
             old_fidel = submodel[s_n, s_m]
             if old_fidel == 2:
                 delta = target_fidel - old_fidel
-                deduct_aib(s_n, n, get_io(hw_prof, delta), aibs)
-                submodel[s_n, s_m] = target_fidel
+                # deduct_aib(s_n, n, get_io(hw_prof, delta), aibs)
+                if can_deduct_aib(s_n, n, get_io(hw_prof, delta), aibs):
+                    deduct_aib(s_n, n, get_io(hw_prof, delta), aibs)
+                    submodel[s_n, s_m] = target_fidel
                 if check_aibs(n, aibs) == 1:
                     print("AIBs used up, return submodel")
                     return submodel
@@ -194,7 +239,7 @@ def read_shard_importance(path):
 
 
 
-def _plan(ddl, buf, hw_prof, shard_prof, n, m):
+def _plan(ddl, hw_prof, shard_prof, n, m):
     # compute planning: get n x m submodel  
     if n == 0 and m == 0:
         (n, m) = plan_compute(ddl, hw_prof)
@@ -202,15 +247,17 @@ def _plan(ddl, buf, hw_prof, shard_prof, n, m):
     else:
         print("using supplied n = %d, m = %d" % (n, m))
     # io planning: fill in the submodel w/ optimal fidelity
-    conf = plan_io(n, m, buf, hw_prof, shard_prof)
+    #conf = plan_io(n, m, hw_prof, shard_prof)
+    # to evaluate specific shard importance tradeoffs
+    conf = plan_io_eval_importance(n, m, hw_prof, shard_prof)
     return conf
 
 
 def plan(ddl, task, n=0, m=0):
-    shard_prof = read_shard_importance('../../shard_importance/{0}_prof.txt'.format(task))
+    shard_prof = read_shard_importance('../../shard_importance/{0}_prof_new.txt'.format(task))
     hw_prof = init_hw_prof()
-    preload_shard = init_preload_shard(m)
-    submodel = _plan(ddl, preload_shard, hw_prof, shard_prof, n, m)
+    # preload_shard = init_preload_shard(n, m, default_size)
+    submodel = _plan(ddl, hw_prof, shard_prof, n, m)
     print("final model:")
     a = "%s" % (str(submodel))
     print(a)

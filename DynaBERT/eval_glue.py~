@@ -42,6 +42,7 @@ from transformers import glue_processors as processors
 from transformers import glue_convert_examples_to_features as convert_examples_to_features
 
 from sti_plan import plan
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -484,6 +485,7 @@ def main():
     write_to_results("%s" % exp_time)
 
     def patch_layer_shard(l, conf):
+        print("Patch L{0} to {1}".format(l, conf))
         model.bert.encoder.layer[l].attention.patch_attention_shards(conf)
         model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(conf)
         model.bert.encoder.layer[l].output.patch_ffn_shards(conf)
@@ -593,7 +595,7 @@ def main():
     #        'dyna_in_mem_4': {'submodel': ours, 'bits': 4},
             # 'dyna_in_mem_6': {'submodel': ours, 'bits': 6},
             # 'ours': {'submodel': ours_tune, 'bits':32}}
-            'ours': {'submodel': ours_tune, 'bits':2}}
+            'ours': {'submodel': ours_tune, 'bits':6}}
     write_to_results('vanilla_dyna')
     for k in baselines.keys():
         baseline = baselines[k]
@@ -604,11 +606,19 @@ def main():
         for idx, conf in enumerate(model_conf):
             depth_mult = conf[0]/12.0
             width_mult = conf[1]/12.0
+
+            # a DynaBERT thing to remove layers uniformly
+            depth = round(depth_mult * 12)
+            kept_layers_index = []
+            for i in range(depth):
+                kept_layers_index.append(math.floor(i/depth_mult))
+
             if 'ours' in k:
                 submodel = plan(ddl[idx], args.task_name, int(conf[0]), int(conf[1]))
                 write_to_results("%s" % (str(submodel)))
+                print(submodel)
                 for i in range(submodel.shape[0]):
-                    patch_layer_shard(i, submodel[i])
+                    patch_layer_shard(kept_layers_index[i], submodel[i])
 
             model.apply(lambda m: setattr(m, 'depth_mult', float(depth_mult)))
             model.apply(lambda m: setattr(m, 'width_mult', float(width_mult)))

@@ -425,6 +425,7 @@ class DynaLinear(nn.Linear):
         if self.dyna_dim[1]:
             self.out_features = round_to_nearest(self.out_features_max, self.width_mult, self.num_heads)
         weight = self.weight[:self.out_features, :self.in_features]
+        # print("in {0}, out {1}".format(self.in_features, self.out_features))
         if self.bias is not None:
             bias = self.bias[:self.out_features]
         else:
@@ -654,9 +655,9 @@ class BertIntermediate(nn.Module):
         self.quantized = {}
 
     def patch_intermediate_shards(self, bits):
-        print("patch intermediate shards..")
+        # print("patch intermediate shards..")
         a = int(self.dense.in_features / self.dense.num_heads)
-        print("Size:", a)
+        # print("Size:", a)
         def patch_one_shard(dst, bits, dim=0):
             for idx, bit in enumerate(bits):
                 if bit not in self.quantized.keys():
@@ -715,9 +716,9 @@ class BertOutput(nn.Module):
         self.quantized = {}
 
     def patch_ffn_shards(self, bits):
-        print("patch FFN shards..")
+        # print("patch FFN shards..")
         a = int(self.dense.out_features / self.dense.num_heads)
-        print("Size:", a)
+        # print("Size:", a)
         def patch_one_shard(dst, bits, dim=1):
             for idx, bit in enumerate(bits):
                 if bit not in self.quantized.keys():
@@ -727,13 +728,14 @@ class BertOutput(nn.Module):
                 index = index.to(src.weight.device)
                 src_w = src.weight.index_select(dim, index).clone().detach()
                 if dst.bias is not None:
+                    # lwg: we will copy the corresponding bias regardless of dim
                     src_b = src.bias[index].clone().detach()
-                    if dim == 1:
-                        print(dst.bias.size())
-                        # --- do nothing --- 
-                    else:
-                        #src_b = src.bias[index].clone().detach()
-                        print(dst.bias.size())
+                    # if dim == 1:
+                        # print("dim = 1...", dst.bias.size())
+                        # # --- do nothing --- 
+                    # else:
+                        # #src_b = src.bias[index].clone().detach()
+                        # print(dst.bias.size())
 
                 dst.weight.requires_grad = False
                 dst.weight.index_copy_(dim, index, src_w.contiguous())
@@ -846,7 +848,7 @@ class BertEncoder(nn.Module):
         for i in range(depth):
             kept_layers_index.append(math.floor(i/self.depth_mult))
 
-        print("keeping...", kept_layers_index)
+        # print("keeping...", kept_layers_index)
 
         for i in kept_layers_index:
             layer_module = self.layer[i]

@@ -53,17 +53,20 @@ def init_hw_prof():
 def init_preload_shard(n, m, size):
     # size of a 6-bit shard
     shard_sz = 0.45
+    # size of a 2-bit shard
+    shard_sz = 0.15
     # the buffer
     s = set()
     num_shards = size/shard_sz
     if num_shards == 0: # M = 0
         for i in range(m): 
-            _s = shard(0, i, 6)
+            _s = shard(0, i, 2)
             s.add(_s)
     else:
         for i in range(n): 
             for j in range(m): 
-                _s = shard(i, j, 6)
+                _s = shard(i, j, 2)
+                # _s = shard(i, j, 6)
                 s.add(_s)
                 if len(s) == num_shards:
                     return s
@@ -99,6 +102,7 @@ def plan_compute(ddl, hw_prof):
     return (min_n, min_m)
     print("Cannot find a valid n, m!! Check DDL...")
 
+'''
 def init_aibs(n, m, hw_prof, buf):
     aibs = [0] * n
     free_io = 0
@@ -108,6 +112,21 @@ def init_aibs(n, m, hw_prof, buf):
     for i in range(0, n):
         aibs[i] = i * comp + free_io
     return aibs
+'''
+
+def init_aibs(n, m, hw_prof, buf):
+    aibs = [0] * n
+    free_io = 0
+    comp = get_comp(hw_prof, m)
+    for i in range(0, n):
+        aibs[i] = i * comp
+
+    for shard in buf:
+        free_io = get_io(hw_prof, shard.b)
+        for i in range(shard.n, n):
+            aibs[i] = aibs[i] + free_io
+    return aibs
+
 
 def deduct_aib(curr, total_layers, t_io, aibs):
     for i in range(curr, total_layers):
@@ -136,14 +155,17 @@ def plan_io_eval_importance(n, m, hw_prof, shard_prof):
     submodel = np.full((n, m), 2)
     to_upgrade = 1
     ranked_importance = np.dstack(np.unravel_index(np.argsort(shard_prof.ravel()), (12, 12)))[0][::-1]
-    # np.random.shuffle(ranked_importance)
+    # least important 
+    #ranked_importance = np.dstack(np.unravel_index(np.argsort(shard_prof.ravel()), (12, 12)))[0]
+    #np.random.shuffle(ranked_importance)
     allocated = 0
     for s in ranked_importance:
         s_n = s[0]
         s_m = s[1]
         # in the submodel we care about
         if s_n < n and s_m < m and allocated < to_upgrade:
-            submodel[s_n, s_m] = 32
+            print("using {0},{1}".format(s_n, s_m))
+            submodel[s_n, s_m] = 6
             allocated += 1
     return submodel
 
@@ -152,8 +174,8 @@ def plan_io_eval_importance(n, m, hw_prof, shard_prof):
 def plan_io(n, m, hw_prof, shard_prof):
     submodel = np.zeros(shape=(n, m))
 
-    #buf_size = m * 0.45 # the first layer shards...
-    buf_size = 0
+    buf_size = 3 * 0.45 # the first layer shards...
+    # buf_size = 0
     preload_buf = init_preload_shard(n, m, buf_size)
 
     # initialize AIBs 
@@ -163,6 +185,13 @@ def plan_io(n, m, hw_prof, shard_prof):
     for s in preload_buf:
         submodel[s.n, s.m] = s.b
         deduct_aib(s.n, n, get_io(hw_prof, s.b), aibs)
+    # dirty..
+    if buf_size == 0:
+        print("preload buf == 0, reset aibs ")
+        aibs[0] = 0
+        # comp = get_comp(hw_prof, m)
+        # for i in range(n):
+            # aibs[i] = i * comp
     print(submodel)
     print(aibs)
     # Pass 1: try to fill the rest of model with lowest-bit shard possible
@@ -247,14 +276,14 @@ def _plan(ddl, hw_prof, shard_prof, n, m):
     else:
         print("using supplied n = %d, m = %d" % (n, m))
     # io planning: fill in the submodel w/ optimal fidelity
-    #conf = plan_io(n, m, hw_prof, shard_prof)
+    conf = plan_io(n, m, hw_prof, shard_prof)
     # to evaluate specific shard importance tradeoffs
-    conf = plan_io_eval_importance(n, m, hw_prof, shard_prof)
+    # conf = plan_io_eval_importance(n, m, hw_prof, shard_prof)
     return conf
 
 
 def plan(ddl, task, n=0, m=0):
-    shard_prof = read_shard_importance('../../shard_importance/{0}_prof_new.txt'.format(task))
+    shard_prof = read_shard_importance('../../shard_importance/{0}_prof_new_35.txt'.format(task))
     hw_prof = init_hw_prof()
     # preload_shard = init_preload_shard(n, m, default_size)
     submodel = _plan(ddl, hw_prof, shard_prof, n, m)
@@ -264,4 +293,4 @@ def plan(ddl, task, n=0, m=0):
     print(submodel)
     return submodel
 
-plan(300, 'qqp', 8, 3)
+# plan(300, 'qqp', 8, 3)

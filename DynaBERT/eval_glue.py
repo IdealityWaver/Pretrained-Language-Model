@@ -414,7 +414,6 @@ def main():
         #print(model.bert.encoder.layer[0].attention.self.attention_head_size)
         return _model
 
-    '''
     # quantize then save the model...
     emb_bits = 3
     enc_bits = 2
@@ -430,7 +429,6 @@ def main():
     #model.save_pretrained(model_save_dir)
     #tokenizer.save_vocabulary(model_save_dir)
     return
-    '''
 
     """
     for bit in enc_bits:
@@ -490,7 +488,6 @@ def main():
         model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(conf)
         model.bert.encoder.layer[l].output.patch_ffn_shards(conf)
 
-    '''
     # ablation study of shard importance 
     write_to_results("ablation_upgrade")
     base_conf  = [2]*12
@@ -517,7 +514,6 @@ def main():
         patch_layer_shard(l, base_conf)
     write_to_results("ablation_upgrade end")
     return
-    '''
 
     # verify heuristics 
 

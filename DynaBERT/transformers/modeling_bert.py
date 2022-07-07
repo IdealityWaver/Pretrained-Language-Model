@@ -152,7 +152,6 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
     else:
         o_idx = []
     new_weights = quantize_f(weights, o_idx, bits)
-    '''
     # restore to original NN module
     for (src, name) in orig_param:
         size = src.data.size()
@@ -164,7 +163,6 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
             print("skipping other layer")
             continue
         src.data = torch.from_numpy(orig).float().view(size)
-    '''
     o_count = 0
     start = time.time()
     # apply quantized weights to original NN module

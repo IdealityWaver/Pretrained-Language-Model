@@ -321,48 +321,59 @@ def main():
     parser = argparse.ArgumentParser()
 
     # Required parameters
+    # liux: 输入数据的文件目录，包含tsv文件的文件夹。
     parser.add_argument("--data_dir", default=None, type=str, required=True,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
+    # liux: 使用的基础模型，有两种可以选，bert和robert。
     parser.add_argument("--model_type", default=None, type=str, required=True,
                         help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()))
+    # liux: 执行任务的名称。
     parser.add_argument("--task_name", default=None, type=str, required=True,
                         help="The name of the task to train selected in the list: " + ", ".join(processors.keys()))
+    # liux: 输出文件夹目录。
     parser.add_argument("--output_dir", default=None, type=str, required=True,
                         help="The output directory where the model predictions will be written.")
+    # liux: 最长的文本序列，默认128。
     parser.add_argument("--max_seq_length", default=128, type=int,
                         help="The maximum total input sequence length after tokenization. Sequences longer "
                              "than this will be truncated, sequences shorter will be padded.")
+    # liux: 是否使用不分大小写的模型，默认为True。
     parser.add_argument("--do_lower_case", default=True,
                         help="Set this flag if you are using an uncased model.")
+    # liux: 每个GPU/CPU执行的batchsize，默认128。
     parser.add_argument("--per_gpu_eval_batch_size", default=128, type=int,
                         help="Batch size per GPU/CPU for evaluation.")
+    # liux: 当CUDA可用时，不适用CUDA。
     parser.add_argument("--no_cuda", action='store_true',
                         help="Avoid using CUDA when available")
+    # liux: 种子值。
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
+    # liux: 教师模型目录。
     parser.add_argument("--model_dir", type=str,
                         help="The teacher model dir.")
+    # liux: 训练的子模型的深度比值，默认为1。
     parser.add_argument('--depth_mult', type=str, default='1.',
                         help="the possible depths used for training, e.g., '1.' is for default")
+    # liux: 训练的子模型的宽度比值，默认为1。
     parser.add_argument('--width_mult', type=str, default='1.',
                         help="the possible depths used for training, e.g., '1.' is for default")
-
     # lwg tune encoder/embedding bits
+    # liux: embeding量化位数。
     parser.add_argument('--emb', type=int, default=0,
                         help="Embedding quantization bits")
+    # liux: encoder量化位数。
     parser.add_argument('--enc', type=int, default=0,
                         help="Encoder quantization bits")
-    
     args = parser.parse_args()
-    # lwg: don't use best
-    #args.model_dir = os.path.join(args.model_dir, 'best')
-    bits_conf = str(args.emb) + '_' + str(args.enc)
-    #bits_conf = ''
+
+
+    args.model_dir = os.path.join(args.model_dir, args.task_name)
     model_root = args.model_dir
-    args.model_dir = os.path.join(args.model_dir, bits_conf)
+    bits_conf = str(args.emb) + '_' + str(args.enc)
+    args.model_dir = os.path.join(model_root, bits_conf)
     # lwg: choose spare GPU on the server....
     device = torch.device("cuda:3" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-    #device = torch.device("cpu")
     args.n_gpu = torch.cuda.device_count()
     args.device = device
     torch.cuda.empty_cache()
@@ -377,6 +388,7 @@ def main():
     set_seed(args)
 
     # Prepare GLUE task
+    # liux: 准备GLUE任务数据集。
     args.task_name = args.task_name.lower()
     if args.task_name not in processors:
         raise ValueError("Task not found: %s" % (args.task_name))
@@ -386,12 +398,13 @@ def main():
     label_list = processor.get_labels()
     num_labels = len(label_list)
 
+    # liux: 读取对应量化位目录下的模型config、模型和tokenizer
     args.model_type = args.model_type.lower()
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
-
     # lwg: load one base model, specified by enc_bit, emb_bit 
     config = config_class.from_pretrained(args.model_dir, num_labels=num_labels, finetuning_task=args.task_name)
     tokenizer = tokenizer_class.from_pretrained(args.model_dir, do_lower_case=args.do_lower_case)
+    # liux: 加载archive文件中的模型参数到模型实例中，返回模型实例。
     model = model_class.from_pretrained(args.model_dir, config=config)
     model.to(args.device)
     model.bert.encoder.update_bit(args.enc)
@@ -414,8 +427,8 @@ def main():
         #print(model.bert.encoder.layer[0].attention.self.attention_head_size)
         return _model
 
-    '''
     # quantize then save the model...
+    # liux: 量化模型后保存。
     emb_bits = 3
     enc_bits = 2
     if emb_bits != 0:
@@ -430,7 +443,6 @@ def main():
     #model.save_pretrained(model_save_dir)
     #tokenizer.save_vocabulary(model_save_dir)
     return
-    '''
 
     """
     for bit in enc_bits:
@@ -490,7 +502,6 @@ def main():
         model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(conf)
         model.bert.encoder.layer[l].output.patch_ffn_shards(conf)
 
-    '''
     # ablation study of shard importance 
     write_to_results("ablation_upgrade")
     base_conf  = [2]*12
@@ -517,7 +528,6 @@ def main():
         patch_layer_shard(l, base_conf)
     write_to_results("ablation_upgrade end")
     return
-    '''
 
     # verify heuristics 
 

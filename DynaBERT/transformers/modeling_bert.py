@@ -90,10 +90,23 @@ def gather_layer_weights(layer):
 
 # lwg: gobo implementation 
 # returns quantized matrix
+'''
+@Author: liux
+@Time: 2023/12/27 20:14:02
+@Desc: o_idx为bool类型的array，weights为tensor，二者大小相同。
+weughts对应位置值为True的代表该元素是异常值。
+'''
 def gobo_quantize(weights, o_idx, bits):
     print("gobo qunatization. Bits = ", bits)
+    print(weights.size())
+    # liux: 将weights从tensor转变成numpy。因为o_idx是numpy，存储的元素类型位dtype('bool')，True为1，False为0
+    # 用dtype('bool')的numpy对tensor做mask，实际上是tensor取下标0或者1的元素。
+    weights = weights.numpy()
+    # liux: 对weights做mask，取出正常值。
     g_group = weights[~o_idx]
+    # liux: 对所有正常值从小到大排序。
     g_group = np.sort(g_group)
+    # liux: 将正常值分成2^n组，每step个数分为1组，将一组的平均值作为该组的代表值，并取该组的第一个值为界线。
     bins = []
     n_bins = pow(2, bits)
     step = int(len(g_group)/n_bins)
@@ -103,29 +116,36 @@ def gobo_quantize(weights, o_idx, bits):
         start = i * step
         centroids.append(np.average(g_group[start: start + step]))
         bins.append(g_group[start])
-    # boundary 
+    # liux: 界线加入最后一个数，即bins为[g_group[0],......,g_group[-1]]。
     bins.append(g_group[-1])
-    print("centroids boundary: ", bins)
+    # print("centroids boundary: ", bins)
     #centroids.append(-99999.0) 
+    # liux: 这里为什么要append centroids[0]？g_group应该还剩下最后不足一个step的一小段没有处理，应该是append这最后一小段的average。
+    # 如果没有最后一小段的剩余，即len(g_group)/n_bins能整除，那就不应该再加入下面这段
+    # centroids.append(np.average(g_group[n_bins * step:]))
     centroids.append(centroids[0]) 
-    print("centroids : ", centroids)
+    # print("centroids : ", centroids)
     centroids = np.array(centroids)
     # assign quantized values
+    # liux: 如果right为True，那么weights中小于等于最小界线的值都是0，减1则为-1，-1在centroids中的下标是最后一个，因此会取到最后一个centroids。
+    # 而最后一个centroids之前append了最小值。
     quantized = np.digitize(weights, bins, right = True) - 1 # return the idx of the centroids
     print("quantzied weights are:", quantized)
-    print("debug .....")
-    print(weights[:16])
-    print(quantized[:16])
+    # print("debug .....")
+    # print(weights[:16])
+    # print(quantized[:16])
     #save_weight_to_file('/tmp/weight', quantized)
     start = time.time()
+    # liux: 生成新的权重，将每个值变成平均值。
     new_weights = centroids[quantized]
     # recover corresponding outlier weights
+    # liux: 恢复新权重中的异常值。
     new_weights[o_idx] = weights[o_idx]
     end = time.time()
     print("restoring weight takes " ,(end-start) * 1000, "ms")
-    print("centroids size: " , centroids.shape)
+    print("centroids size: " , centroids.shape) 
     print("quantized weight size: ", quantized.shape)
-    print("original weight size: ", weights.size())
+    print("original weight size: ", weights.size) 
     #print("outlier size: ", len(o_idx))
     # sanity check manually patch some boundary values...
     for idx,d in enumerate(new_weights):
@@ -137,6 +157,11 @@ def gobo_quantize(weights, o_idx, bits):
                 print("manually patch", weights[idx], "to", centroids[0])
     return new_weights
 
+'''
+@Author: liux
+@Time: 2023/12/24 15:51:40
+量化某一层。
+'''
 # lwg: unified quantization entry
 # layer: layer to be quantized
 # quantize_f: gobo/kmeans, returns quantized new weights 
@@ -152,7 +177,6 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
     else:
         o_idx = []
     new_weights = quantize_f(weights, o_idx, bits)
-    '''
     # restore to original NN module
     for (src, name) in orig_param:
         size = src.data.size()
@@ -164,7 +188,6 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
             print("skipping other layer")
             continue
         src.data = torch.from_numpy(orig).float().view(size)
-    '''
     o_count = 0
     start = time.time()
     # apply quantized weights to original NN module
@@ -812,10 +835,12 @@ class BertLayer(nn.Module):
 class BertEncoder(nn.Module):
     def __init__(self, config):
         super(BertEncoder, self).__init__()
+        # liux: 下面三个变量都是bool变量。
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
         self.output_intermediate = config.output_intermediate
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        # liux: 模型深度比值。
         self.depth_mult = 1.
         # lwg: orig precsion bit = 0
         self.bit = 0

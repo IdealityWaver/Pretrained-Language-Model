@@ -201,6 +201,11 @@ class PreTrainedModel(nn.Module):
         torch.save(model_to_save.state_dict(), output_model_file)
         logger.info("Model weights saved in {}".format(output_model_file))
 
+    '''
+    @Author: liux
+    @Time: 2023/12/23 23:59:31
+    类方法。与静态方法的区别是，类方法会将调用该方法的类对象作为参数传入，即cls。
+    '''
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
         r"""Instantiate a pretrained pytorch model from a pre-trained model configuration.
@@ -267,6 +272,7 @@ class PreTrainedModel(nn.Module):
             model = BertModel.from_pretrained('./tf_model/my_tf_checkpoint.ckpt.index', from_tf=True, config=config)
 
         """
+        # liux: 从参数字典中解析出对应的对象。
         config = kwargs.pop('config', None)
         state_dict = kwargs.pop('state_dict', None)
         cache_dir = kwargs.pop('cache_dir', None)
@@ -276,6 +282,7 @@ class PreTrainedModel(nn.Module):
         output_loading_info = kwargs.pop('output_loading_info', False)
 
         # Load config
+        # liux: 如果没传过来config，就单独生成一个config。
         if config is None:
             config, model_kwargs = cls.config_class.from_pretrained(
                 pretrained_model_name_or_path, *model_args,
@@ -284,9 +291,11 @@ class PreTrainedModel(nn.Module):
                 **kwargs
             )
         else:
+            # liux: 将字典参数赋值给模型字典参数。
             model_kwargs = kwargs
 
         # Load model
+        # liux: 从pretrained_model_name_or_path中解析出pytorch_model.bin文件，即archive文件。
         if pretrained_model_name_or_path is not None:
             if pretrained_model_name_or_path in cls.pretrained_model_archive_map:
                 archive_file = cls.pretrained_model_archive_map[pretrained_model_name_or_path]
@@ -312,6 +321,7 @@ class PreTrainedModel(nn.Module):
 
             # redirect to the cache, if necessary
             try:
+                # liux: 判断archive是URL还是文件路径，如果是URL就下载文件，返回下载文件的路径；如果是文件路径，就判断是否存在文件，返回文件路径。
                 resolved_archive_file = cached_path(archive_file, cache_dir=cache_dir, force_download=force_download, proxies=proxies)
             except EnvironmentError:
                 if pretrained_model_name_or_path in cls.pretrained_model_archive_map:
@@ -336,8 +346,10 @@ class PreTrainedModel(nn.Module):
             resolved_archive_file = None
 
         # Instantiate model.
+        # liux: 这里生成的实例是调用该方法的类的实例，比如BertForSequenceClassification，这里实例化一个BertForSequenceClassification的实例对象。
         model = cls(config, *model_args, **model_kwargs)
 
+        # liux: 从archive文件中读取模型参数。
         if state_dict is None and not from_tf:
             state_dict = torch.load(resolved_archive_file, map_location='cpu')
 
@@ -360,6 +372,7 @@ class PreTrainedModel(nn.Module):
                     raise e
         else:
             # Convert old format to new format if needed from a PyTorch state_dict
+            # liux: 将旧格式的Pytorch模型参数变成新格式的模型参数。
             old_keys = []
             new_keys = []
             for key in state_dict.keys():
@@ -381,18 +394,24 @@ class PreTrainedModel(nn.Module):
                 state_dict._metadata = metadata
 
             def load(module, prefix=''):
+                # liux: 取出特定前缀的metadata。
                 local_metadata = {} if metadata is None else metadata.get(prefix[:-1], {})
+                # liux: 加载local_metadata对应的参数加载进模型中。
                 module._load_from_state_dict(
                     state_dict, prefix, local_metadata, True, missing_keys, unexpected_keys, error_msgs)
+                # 递归加载模型的子模型参数。
                 for name, child in module._modules.items():
                     if child is not None:
                         load(child, prefix + name + '.')
 
             # Make sure we are able to load base models as well as derived models (with heads)
+            # liux: cls.base_model_prefix='bert'，判断model中是否存在bert属性，即是否存在基础模型bert，因为model一般是在基础bert添加分类层得到的封装实例对象。
             start_prefix = ''
             model_to_load = model
+            # liux: 如果model没有成员对象bert，但是state_dict中有以bert为前缀的key，说明要将这部分参数取出并加载到model中。
             if not hasattr(model, cls.base_model_prefix) and any(s.startswith(cls.base_model_prefix) for s in state_dict.keys()):
                 start_prefix = cls.base_model_prefix + '.'
+            # liux: 如果model有bert成员对象并且state_dict中没有任何一个参数有bert前缀，就说明state_dict中的参数是要加载进成员对象bert的，而不是原始model对象。
             if hasattr(model, cls.base_model_prefix) and not any(s.startswith(cls.base_model_prefix) for s in state_dict.keys()):
                 model_to_load = getattr(model, cls.base_model_prefix)
 

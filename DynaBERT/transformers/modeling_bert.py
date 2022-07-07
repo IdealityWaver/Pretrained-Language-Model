@@ -610,7 +610,11 @@ class BertAttention(nn.Module):
                 index = index.to(src.weight.device)
                 src_w = src.weight.index_select(dim, index).clone().detach()
                 if dst.bias is not None:
-                    src_b = src.bias[index].clone().detach()
+                    # src_b = src.bias[index].clone().detach()
+                    if dim == 1:
+                        src_b = src.bias.clone().detach()
+                    else:
+                        src_b = src.bias[index].clone().detach()
 
                 dst.weight.requires_grad = False
                 dst.weight.index_copy_(dim, index, src_w.contiguous())
@@ -618,7 +622,8 @@ class BertAttention(nn.Module):
 
                 if dst.bias is not None:
                     dst.bias.requires_grad = False
-                    dst.bias.index_copy_(0, index, src_b.contiguous())
+                    # dst.bias.index_copy_(0, index, src_b.contiguous())
+                    # dst.bias.copy_(src_b.contiguous())
                     dst.bias.requires_grad = True
 
         #print("----before patching---")
@@ -667,7 +672,13 @@ class BertIntermediate(nn.Module):
                 index = index.to(src.weight.device)
                 src_w = src.weight.index_select(dim, index).clone().detach()
                 if dst.bias is not None:
-                    src_b = src.bias[index].clone().detach()
+                    # src_b = src.bias[index].clone().detach()
+                    if dim == 1:
+                        src_b = src.bias.clone().detach()
+                    else:
+                        src_b = src.bias[index].clone().detach()
+
+ 
                    
                 dst.weight.requires_grad = False
                 dst.weight.index_copy_(dim, index, src_w.contiguous())
@@ -675,7 +686,7 @@ class BertIntermediate(nn.Module):
 
                 if dst.bias is not None:
                     dst.bias.requires_grad = False
-                    dst.bias.index_copy_(0, index, src_b.contiguous())
+                    # dst.bias.copy_(src_b.contiguous())
                     dst.bias.requires_grad = True
 
         patch_one_shard(self.dense, bits)
@@ -729,7 +740,10 @@ class BertOutput(nn.Module):
                 src_w = src.weight.index_select(dim, index).clone().detach()
                 if dst.bias is not None:
                     # lwg: we will copy the corresponding bias regardless of dim
-                    src_b = src.bias[index].clone().detach()
+                    if dim == 1:
+                        src_b = src.bias.clone().detach()
+                    else:
+                        src_b = src.bias[index].clone().detach()
                     # if dim == 1:
                         # print("dim = 1...", dst.bias.size())
                         # # --- do nothing --- 
@@ -743,7 +757,8 @@ class BertOutput(nn.Module):
 
                 if dst.bias is not None:
                     dst.bias.requires_grad = False
-                    dst.bias.index_copy_(0, index, src_b.contiguous())
+                    # dst.bias.index_copy_(0, index, src_b.contiguous())
+                    # dst.bias.copy_(src_b.contiguous())
                     dst.bias.requires_grad = True
 
         patch_one_shard(self.dense, bits)

@@ -54,18 +54,18 @@ def init_preload_shard(n, m, size):
     # size of a 6-bit shard
     shard_sz = 0.45
     # size of a 2-bit shard
-    shard_sz = 0.15
+    #shard_sz = 0.15
     # the buffer
     s = set()
     num_shards = size/shard_sz
     if num_shards == 0: # M = 0
         for i in range(m): 
-            _s = shard(0, i, 2)
+            _s = shard(0, i, 6)
             s.add(_s)
     else:
         for i in range(n): 
             for j in range(m): 
-                _s = shard(i, j, 2)
+                _s = shard(i, j, 6)
                 # _s = shard(i, j, 6)
                 s.add(_s)
                 if len(s) == num_shards:
@@ -175,7 +175,7 @@ def plan_io(n, m, hw_prof, shard_prof):
     submodel = np.zeros(shape=(n, m))
 
     buf_size = 3 * 0.45 # the first layer shards...
-    # buf_size = 0
+    #buf_size = 0.45 
     preload_buf = init_preload_shard(n, m, buf_size)
 
     # initialize AIBs 
@@ -283,7 +283,8 @@ def _plan(ddl, hw_prof, shard_prof, n, m):
 
 
 def plan(ddl, task, n=0, m=0):
-    shard_prof = read_shard_importance('../../shard_importance/{0}_prof_new_35.txt'.format(task))
+    #shard_prof = read_shard_importance('../../shard_importance/{0}_prof_new_35.txt'.format(task))
+    shard_prof = read_shard_importance('../../shard_importance/{0}_prof_new.txt'.format(task))
     hw_prof = init_hw_prof()
     # preload_shard = init_preload_shard(n, m, default_size)
     submodel = _plan(ddl, hw_prof, shard_prof, n, m)

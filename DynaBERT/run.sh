@@ -3,11 +3,11 @@
 #TASK=SST-2
 #TASK=STS-B
 #TASK=MNLI
-#TASK=RTE
+TASK=RTE
 #TASK=MRPC # --- missing dev.csv
 #TASK=CoLA
 #TASK=QQP
-TASK=QNLI
+#TASK=QNLI
 #for ((emb = 1; emb <= 5; emb++))RTE
 
 #for ((emb = 3; emb < 4; emb++))

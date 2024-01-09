@@ -109,14 +109,17 @@ def main():
     tokenizer = tokenizer_class.from_pretrained(args.model_dir, do_lower_case=args.do_lower_case)
     model = model_class.from_pretrained(args.model_dir, config=config)
     model.to(args.device)
-    # liux: 更新模型encoder的量化位。
+
     model.bert.encoder.update_bit(args.enc)
 
     emb_bits = 8
-    enc_bits = 2
+    enc_bits = 4
     if emb_bits != 0:
+        print("--------quantize embedings--------")
         model.bert.embeddings.quantize(emb_bits)
-
+    if enc_bits != 0:
+        print("--------quantize encoder--------")
+        model.bert.encoder.quantize(enc_bits)
     # if enc_bits != 0:
     #     model.bert.encoder.quantize(enc_bits)
     # model_save_dir = os.path.join(model_root, str(emb_bits) + '_' + str(enc_bits))

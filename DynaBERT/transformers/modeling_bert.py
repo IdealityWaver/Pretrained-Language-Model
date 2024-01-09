@@ -98,7 +98,6 @@ weughts对应位置值为True的代表该元素是异常值。
 '''
 def gobo_quantize(weights, o_idx, bits):
     print("gobo qunatization. Bits = ", bits)
-    print(weights.size())
     # liux: 将weights从tensor转变成numpy。因为o_idx是numpy，存储的元素类型位dtype('bool')，True为1，False为0
     # 用dtype('bool')的numpy对tensor做mask，实际上是tensor取下标0或者1的元素。
     weights = weights.numpy()
@@ -127,34 +126,34 @@ def gobo_quantize(weights, o_idx, bits):
     # print("centroids : ", centroids)
     centroids = np.array(centroids)
     # assign quantized values
-    # liux: 如果right为True，那么weights中小于等于最小界线的值都是0，减1则为-1，-1在centroids中的下标是最后一个，因此会取到最后一个centroids。
+    # liux: 将每个权重都变成质心的idx，所有小于等于最小正常值的为-1（最小质心），所有大于最大正常值的为256（最小质心）
+    # 如果right为True，那么weights中小于等于最小界线的值都是0，减1则为-1，-1在centroids中的下标是最后一个，因此会取到最后一个centroids。
     # 而最后一个centroids之前append了最小值。
     quantized = np.digitize(weights, bins, right = True) - 1 # return the idx of the centroids
     print("quantzied weights are:", quantized)
-    # print("debug .....")
-    # print(weights[:16])
-    # print(quantized[:16])
     #save_weight_to_file('/tmp/weight', quantized)
-    start = time.time()
+    # start = time.time()
     # liux: 生成新的权重，将每个值变成平均值。
     new_weights = centroids[quantized]
     # recover corresponding outlier weights
     # liux: 恢复新权重中的异常值。
     new_weights[o_idx] = weights[o_idx]
-    end = time.time()
-    print("restoring weight takes " ,(end-start) * 1000, "ms")
+    # end = time.time()
+    # print("restoring weight takes " ,(end-start) * 1000, "ms")
     print("centroids size: " , centroids.shape) 
+    print("bins size: ", len(bins))
     print("quantized weight size: ", quantized.shape)
     print("original weight size: ", weights.size) 
     #print("outlier size: ", len(o_idx))
+
     # sanity check manually patch some boundary values...
-    for idx,d in enumerate(new_weights):
-        if d < -100.0:
-            print(idx, weights[idx],"fail to be binned?? new_weight =", new_weights[idx])
-            # there are values that are not in outlier idx 
-            if idx not in o_idx:
-                new_weights[idx] = centroids[0]
-                print("manually patch", weights[idx], "to", centroids[0])
+    # for idx,d in enumerate(new_weights):
+    #     if d < -100.0:
+    #         print(idx, weights[idx],"fail to be binned?? new_weight =", new_weights[idx])
+    #         # there are values that are not in outlier idx 
+    #         if idx not in o_idx:
+    #             new_weights[idx] = centroids[0]
+    #             print("manually patch", weights[idx], "to", centroids[0])
     return new_weights
 
 '''
@@ -177,19 +176,23 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
     else:
         o_idx = []
     new_weights = quantize_f(weights, o_idx, bits)
+
+    # liux: 下面这段for循环似乎无意义。似乎是为了复原模型参数，但是和下面的重复了，并且new_weights在第二个复原代码中被置为空。
     # restore to original NN module
-    for (src, name) in orig_param:
-        size = src.data.size()
-        length = src.data.nelement()
-        orig = new_weights[:length]
-        new_weights = new_weights[length:]
-        # only qunatize non-layernorm modules in a layer 
-        if "LayerNorm" not in name:
-            print("skipping other layer")
-            continue
-        src.data = torch.from_numpy(orig).float().view(size)
+    # for (src, name) in orig_param:
+    #     size = src.data.size()
+    #     length = src.data.nelement()
+    #     orig = new_weights[:length]
+    #     new_weights = new_weights[length:]
+    #     # only qunatize non-layernorm modules in a layer 
+    #     if "LayerNorm" not in name:
+    #         print("skipping other layer")
+    #         continue
+    #     src.data = torch.from_numpy(orig).float().view(size)
+
     o_count = 0
     start = time.time()
+    # liux: 将量化后的参数应用到模型中。
     # apply quantized weights to original NN module
     for name, param in layer.named_parameters():
         if param.requires_grad:
@@ -223,7 +226,7 @@ def _quantize(layer, quantize_f, detect_o=True, bits=3):
     end = time.time()
     print("total outliers in this layer:", "{:.2%}".format(o_count/weights.nelement()))
     # the measured time is not meaningful as it is pytorch implementation
-    # print("time to restore compressed weights:", (end - start)*1000)
+    print("time to restore compressed weights:", (end - start)*1000)
     # sanity check, all outliers must be preserved 
     assert o_count == len(o_group)
     return o_count
@@ -432,7 +435,14 @@ def round_to_nearest(input_size, width_mult, num_heads, min_value=1):
     return new_input_size
 
 
+'''
+@Author: liux
+@Time: 2023/12/30 14:35:34
+@Desc: 用来缩减模型宽度，dyna_dim为长度为2的bool数组，第一个bool代表是否只计算一部分输入特征，第二个bool代表是否只输出一部分特征。
+默认情况下是不缩减，和普通的nn.Linear一样的功能。
+'''
 class DynaLinear(nn.Linear):
+    # liux: dyna_dim如果为[False, True]表示输入特征不变，输出特征缩减。相邻两个DynaLinear的dyna_dim应该在边界处保持一致。
     def __init__(self, in_features, out_features, num_heads, bias=True, dyna_dim=[True, True]):
         super(DynaLinear, self).__init__(
             in_features, out_features, bias=bias)
@@ -471,8 +481,11 @@ class BertEmbeddings(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def quantize(self, bits):
+        print("------------------quantize word_embeddings------------------")
         _quantize(self.word_embeddings, gobo_quantize, detect_o=True, bits=bits)
+        print("------------------quantize position_embeddings------------------")
         _quantize(self.position_embeddings, gobo_quantize, detect_o=True, bits=bits)
+        print("------------------quantize token_type_embeddings------------------")
         _quantize(self.token_type_embeddings, gobo_quantize, detect_o=True, bits=bits)
 
     def forward(self, input_ids, token_type_ids=None, position_ids=None):
@@ -507,6 +520,7 @@ class BertSelfAttention(nn.Module):
         self.orig_num_attention_heads = config.num_attention_heads
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
+        # liux: 所有head在一个dense中。
         # dense layer for adaptive width
         self.query = DynaLinear(config.hidden_size, self.all_head_size, config.num_attention_heads, dyna_dim=[False, True])
         self.key = DynaLinear(config.hidden_size, self.all_head_size, config.num_attention_heads, dyna_dim=[False, True])
@@ -527,6 +541,7 @@ class BertSelfAttention(nn.Module):
         self.num_attention_heads = round(self.orig_num_attention_heads * self.query.width_mult)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
+        # liux: mixed_query_layer[bs, L, hidden_size] -> query_layer[B, head_num, L, head_size]，对于key和value也是同理。
         query_layer = self.transpose_for_scores(mixed_query_layer)
         key_layer = self.transpose_for_scores(mixed_key_layer)
         value_layer = self.transpose_for_scores(mixed_value_layer)
@@ -538,6 +553,7 @@ class BertSelfAttention(nn.Module):
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
 
+        # liux: attention_probs[bs, head_num, L, L]
         # Normalize the attention scores to probabilities.
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
@@ -551,6 +567,7 @@ class BertSelfAttention(nn.Module):
 
         context_layer = torch.matmul(attention_probs, value_layer)
 
+        # liux: context_layer[bs, head_num, L, L] -> context_layer[bs, L, head_num, L] -> context_layer[bs, L, all_head_size]
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
@@ -803,6 +820,7 @@ class BertOutput(nn.Module):
             self.dense.bias.copy_(b.contiguous())
             self.dense.bias.requires_grad = True
 
+    # liux: hidden_states: intermediate_output, input_tensor: attention_output
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
@@ -867,6 +885,7 @@ class BertEncoder(nn.Module):
             print("quantizing ", i)
             #gobo_quantize_one_layer(self.layer[i], 6)
             #kmeans_quantize_one_layer(self.layer[i], 3)
+            print("------------------quantize Encoder %d-th Layer------------------" % i)
             outliers += _quantize(self.layer[i], gobo_quantize, True, bits)
             print("outliers = %d" % outliers)
 
@@ -989,6 +1008,7 @@ class BertModel(BertPreTrainedModel):
         self.init_weights()
 
     def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None):
+        # liux: 如果最外层调用forward传入的attention_mask为None，则不会mask任何值。
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:

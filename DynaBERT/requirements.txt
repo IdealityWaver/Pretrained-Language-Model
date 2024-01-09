@@ -6,5 +6,7 @@ boto3
 requests
 
 torch==1.0.0
-python==3.6
 seaborn
+scikit-learn==0.19.2
+
+python==3.7

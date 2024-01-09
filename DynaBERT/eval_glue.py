@@ -442,7 +442,7 @@ def main():
             os.makedirs(model_save_dir)
     #model.save_pretrained(model_save_dir)
     #tokenizer.save_vocabulary(model_save_dir)
-    return
+    # return
 
     """
     for bit in enc_bits:
@@ -497,12 +497,16 @@ def main():
     write_to_results("%s" % exp_time)
 
     def patch_layer_shard(l, conf):
-        print("Patch L{0} to {1}".format(l, conf))
+        print("Patch Layer {0} to {1}".format(l, conf))
         model.bert.encoder.layer[l].attention.patch_attention_shards(conf)
         model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(conf)
         model.bert.encoder.layer[l].output.patch_ffn_shards(conf)
 
+
+    # liux: 针对每个碎片的消融实验获得碎片重要程度。遍历每个碎片，将碎片位宽设置为32位，
+    # 其余碎片都是2位，得到该设置下的模型准确度。
     # ablation study of shard importance 
+    '''
     write_to_results("ablation_upgrade")
     base_conf  = [2]*12
     for l in range(0, 12):
@@ -514,6 +518,7 @@ def main():
             model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(shard_conf2)
             model.bert.encoder.layer[l].output.patch_ffn_shards(shard_conf2)
 
+            # liux: 在model的所有子模型和自身中执行lambda函数，设置模型的宽度和高度。
             model.apply(lambda m: setattr(m, 'depth_mult', float(1.0)))
             model.apply(lambda m: setattr(m, 'width_mult', float(1.0)))
 
@@ -527,21 +532,19 @@ def main():
         # reset prev layer before proceeding to the next
         patch_layer_shard(l, base_conf)
     write_to_results("ablation_upgrade end")
-    return
+    '''
 
     # verify heuristics 
-
-            
-
     def reset_model(bits):
         conf = [bits]*12
         for l in range(0, 12):
             patch_layer_shard(l, conf)
 
+    # liux: 根据上面消融实验得到的碎片重要程度，列出最重要的6个碎片。
+    # 并且将这6个碎片的位宽设置为6，其余为2。
     # our heuristics: top 6 most important shards to 6-bit
     # from downgrade map: (11, 3), (10, 1), (10, 4), (10, 6), (10, 8), (10, 9) ---> does not work
     # from upgrade map: (0, 0), (0,3), (1, 5), (6, 1), (7, 0) (7, 8) ---> good performance
-
     '''
     #reset_model(6)
     tmp_conf = [2]*12
@@ -619,6 +622,7 @@ def main():
             depth_mult = conf[0]/12.0
             width_mult = conf[1]/12.0
 
+            # liux: 跳着选择depth个层。
             # a DynaBERT thing to remove layers uniformly
             depth = round(depth_mult * 12)
             kept_layers_index = []
@@ -626,9 +630,23 @@ def main():
                 kept_layers_index.append(math.floor(i/depth_mult))
 
             if 'ours' in k:
+                # liux: submodel是n*m的矩阵，n代表层数，m代表每层碎片数，
+                # submodel表示每个碎片的量化位。
                 submodel = plan(ddl[idx], args.task_name, int(conf[0]), int(conf[1]))
                 write_to_results("%s" % (str(submodel)))
                 print(submodel)
+                # liux: 将选择的层的选择的碎片，设置成对应的量化位，
+                # STI缩减层数是按照DynaBert的方式跳跃统一地选择层，但是通过plan获得的最优子模型是
+                # 选择的前n个层作为子模型，两种方式似乎都不太合理，何况该代码还前后不一致。
+                # 深度选择应该可以通过多出口自适应的修改。
+
+                # 关于head数量，STI论文里描述是所有层数都是固定的m。
+                # 默认选择前m个碎片，必须得先将每一层的碎片重新按照重要程度排序后才能适用，本质上还是宽度自适应。
+                # DynaBert中对于不同宽度的模型是需要重新训练的，但是STI没有。
+                # STI的方法按照碎片重要性选择使用的碎片，有一定的道理。
+                # 如果按照多出口的方式处理深度自适应，不同多出口中间的子模型可以使用不同数量的碎片。
+                # 即不同深度多出口宽度自适应，参考周萌。
+                # 即使不使用多出口，不同层的不同碎片重要程度不同，也不应该固定所有层的碎片数量一样。
                 for i in range(submodel.shape[0]):
                     patch_layer_shard(kept_layers_index[i], submodel[i])
 

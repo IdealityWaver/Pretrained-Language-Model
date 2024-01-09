@@ -78,6 +78,11 @@ def get_comp(hw_prof, num_shards):
 def get_io(hw_prof, bits):
     return hw_prof['io'][bits]
 
+'''
+@Author: liux
+@Time: 2024/01/05 18:35:17
+@Desc: 根据计算时间找到符合ddl的最大的模型。
+'''
 def plan_compute(ddl, hw_prof):
     # n: layers 
     min_n = 3
@@ -207,6 +212,10 @@ def plan_io(n, m, hw_prof, shard_prof):
     print(submodel)
     # Pass 2: try to allocate 6-bit fidelities to important shards
     target_fidel = 6
+    # liux: ravel(): 拉成一维数组
+    # unravel_index: 值在原始矩阵中的下标
+    # dstack: 将元素沿着深度堆叠。
+    # ranked_importance为2维数组，第2维有两个数，表示下标。按照重要性排序。
     # ranked from most important to least important
     ranked_importance = np.dstack(np.unravel_index(np.argsort(shard_prof.ravel()), (12, 12)))[0][::-1]
     # ranked from **least** important to most
@@ -217,6 +226,8 @@ def plan_io(n, m, hw_prof, shard_prof):
         # print(shard_prof[s[0], s[1]])
         s_n = s[0]
         s_m = s[1]
+        # liux: TODO s_m<m可以通过碎片重要性将每一层的碎片重新排序，只取前m个碎片。
+        # 但是s_n<n表示只取前n层的碎片吗？在eva中按照DynaBert的取层方式，跳着取n个层。
         # in the submodel we care about
         if s_n < n and s_m < m:
             old_fidel = submodel[s_n, s_m]
@@ -284,7 +295,10 @@ def _plan(ddl, hw_prof, shard_prof, n, m):
 
 def plan(ddl, task, n=0, m=0):
     #shard_prof = read_shard_importance('../../shard_importance/{0}_prof_new_35.txt'.format(task))
+    # liux: shard_prof是碎片重要性矩阵，12*12，值代表该碎片32位的模型准确度。
     shard_prof = read_shard_importance('../../shard_importance/{0}_prof_new.txt'.format(task))
+    # liux: hw_prof是碎片io和comp时间字典，包括有不同量化位下的io时间以及一层中不同碎片数量
+    # 的comp时间。
     hw_prof = init_hw_prof()
     # preload_shard = init_preload_shard(n, m, default_size)
     submodel = _plan(ddl, hw_prof, shard_prof, n, m)

@@ -64,7 +64,7 @@ def main():
                         help="Avoid using CUDA when available")
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
-    parser.add_argument("--model_dir", type=str, default='models',
+    parser.add_argument("--model_dir", type=str, default='D:\\123\\Code\\DynaBertModels',
                         help="The teacher model dir.")
     parser.add_argument('--depth_mult', type=str, default='1.',
                         help="the possible depths used for training, e.g., '1.' is for default")
@@ -93,6 +93,7 @@ def main():
     logger.info("device: %s, n_gpu: %s", device, args.n_gpu, )
     set_seed(args)
 
+
     # liux: 准备GLUE任务数据集。
     args.task_name = args.task_name.lower()
     if args.task_name not in processors:
@@ -102,6 +103,7 @@ def main():
     label_list = processor.get_labels()
     num_labels = len(label_list)
 
+
     # liux: 读取对应量化位目录下的模型config、模型和tokenizer，并加载archive文件中的模型参数到模型实例中。
     args.model_type = args.model_type.lower()
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
@@ -109,10 +111,12 @@ def main():
     tokenizer = tokenizer_class.from_pretrained(args.model_dir, do_lower_case=args.do_lower_case)
     model = model_class.from_pretrained(args.model_dir, config=config)
     model.to(args.device)
-
     model.bert.encoder.update_bit(args.enc)
 
-    emb_bits = 8
+
+    # liux: 量化模型至不同的位宽，并保存模型。
+    '''
+    emb_bits = 3
     enc_bits = 4
     if emb_bits != 0:
         print("--------quantize embedings--------")
@@ -120,14 +124,69 @@ def main():
     if enc_bits != 0:
         print("--------quantize encoder--------")
         model.bert.encoder.quantize(enc_bits)
-    # if enc_bits != 0:
-    #     model.bert.encoder.quantize(enc_bits)
-    # model_save_dir = os.path.join(model_root, str(emb_bits) + '_' + str(enc_bits))
-    # if not os.path.exists(model_save_dir):
-    #         os.makedirs(model_save_dir)
-    # model.save_pretrained(model_save_dir)
-    # tokenizer.save_vocabulary(model_save_dir)
+        model.bert.encoder.update_bit(enc_bits)
+    model_save_dir = os.path.join(model_root, str(emb_bits) + '_' + str(enc_bits))
+    if not os.path.exists(model_save_dir):
+            os.makedirs(model_save_dir)
+    model.save_pretrained(model_save_dir)
+    tokenizer.save_vocabulary(model_save_dir)
+    '''
 
+    # liux: 从文件中加载特定量化位的模型，并将该量化后的enc添加到主模型的数组中保存。
+    def load_quantized_model(enc_bit, emb_bit=3):
+        bits_conf = str(emb_bit) + '_' + str(enc_bit)
+        print("loading ", bits_conf, "...")
+        model_dir = os.path.join(model_root, bits_conf)
+        config = config_class.from_pretrained(model_dir, num_labels=num_labels, finetuning_task=args.task_name)
+        tokenizer = tokenizer_class.from_pretrained(model_dir, do_lower_case=args.do_lower_case)
+        _model = model_class.from_pretrained(model_dir, config=config)
+        _model.to(args.device)
+        _model.bert.encoder.update_bit(enc_bit)
+        model.bert.encoder.add_quantized_model(_model.bert.encoder)
+        # 64 dim per head
+        #print(model.bert.encoder.layer[0].attention.self.attention_head_size)
+        return _model
+
+    # load_quantized_model(4)
+    # load_quantized_model(6)
+    # load_quantized_model(8)
+    # load_quantized_model(10)
+
+    # shard_conf1 = [4] * 12
+    #shard_conf1[3] = 6 
+    #shard_conf1[0] = 6 
+    # model.bert.encoder.layer[0].attention.patch_attention_shards(shard_conf1)
+    # model.bert.encoder.layer[0].intermediate.patch_intermediate_shards(shard_conf1)
+    # model.bert.encoder.layer[0].output.patch_ffn_shards(shard_conf1)
+    # for i in range(12):
+    #     model.bert.encoder.layer[i].attention.patch_attention_shards(shard_conf1)
+    #     model.bert.encoder.layer[i].intermediate.patch_intermediate_shards(shard_conf1)
+    #     model.bert.encoder.layer[i].output.patch_ffn_shards(shard_conf1)
+
+    def patch_layer_shard(l, conf):
+        print("Patch Layer {0} to {1}".format(l, conf))
+        model.bert.encoder.layer[l].attention.patch_attention_shards(conf)
+        model.bert.encoder.layer[l].intermediate.patch_intermediate_shards(conf)
+        model.bert.encoder.layer[l].output.patch_ffn_shards(conf)
+
+    def write_to_results(s):
+        eval_output_dir = os.path.join(args.output_dir,
+                                       args.model_type + '_' + args.width_mult + '_' + args.depth_mult + '_eval')
+        if not os.path.exists(eval_output_dir):
+                # and args.local_rank in [-1, 0]:
+            os.makedirs(eval_output_dir)
+        #output_eval_file = os.path.join(eval_output_dir, "{0}_prof.txt".format("ablation_upgrade"))
+        output_eval_file = os.path.join(eval_output_dir, "{0}_ours.txt".format(args.task_name))
+        with open(output_eval_file, "a") as writer:
+            writer.write(s)
+            writer.write('\n')
+
+    from datetime import datetime
+    exp_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    write_to_results("%s eval begin at %s" % args.task_name, exp_time)
+
+
+    
 
 
 if __name__ == "__main__":
@@ -145,3 +204,6 @@ if __name__ == "__main__":
     # print(x[maskk])
     # print(x[~mask])
     main()
+
+
+    

@@ -541,11 +541,12 @@ class BertSelfAttention(nn.Module):
         self.num_attention_heads = round(self.orig_num_attention_heads * self.query.width_mult)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
-        # liux: mixed_query_layer[bs, L, hidden_size] -> query_layer[B, head_num, L, head_size]，对于key和value也是同理。
+        # liux: mixed_query_layer[bs, L, all_head_size] -> query_layer[bs, head_num, L, head_size]，key和value也是同理。
         query_layer = self.transpose_for_scores(mixed_query_layer)
         key_layer = self.transpose_for_scores(mixed_key_layer)
         value_layer = self.transpose_for_scores(mixed_value_layer)
 
+        # liux: attention_scores[bs, head_num, L, L]
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
@@ -553,7 +554,6 @@ class BertSelfAttention(nn.Module):
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
 
-        # liux: attention_probs[bs, head_num, L, L]
         # Normalize the attention scores to probabilities.
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
@@ -565,9 +565,10 @@ class BertSelfAttention(nn.Module):
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
 
+        # liux: context_layer[bs, head_num, L, head_size]
         context_layer = torch.matmul(attention_probs, value_layer)
 
-        # liux: context_layer[bs, head_num, L, L] -> context_layer[bs, L, head_num, L] -> context_layer[bs, L, all_head_size]
+        # liux: context_layer[bs, head_num, L, head_size] -> context_layer[bs, L, head_num, head_size] -> context_layer[bs, L, all_head_size]
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
@@ -586,6 +587,7 @@ class BertSelfOutput(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
+        # liux: Bert源码中norm是input_tensor+norm(hidden_states)
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
@@ -597,6 +599,7 @@ class BertAttention(nn.Module):
         super(BertAttention, self).__init__()
         self.self = BertSelfAttention(config)
         self.output = BertSelfOutput(config)
+        # liux: 存储不同量化位宽的模块。
         # models with other bit widths of the same layer
         self.quantized = {}
     
@@ -629,6 +632,7 @@ class BertAttention(nn.Module):
         reorder_head_matrix(self.self.value, index)
         reorder_head_matrix(self.output.dense, index, dim=1)
 
+    # liux: 加载不同位宽的注意力模块碎片。输入1*12数组，每个数代表一个head碎片的量化位宽。
     # lwg: use similar methods for applying mixed-precision shards 
     # bits: 1x12 array, each entry indicates a bit width for the attention head at its entry's idx
     def patch_attention_shards(self, bits):
@@ -648,22 +652,39 @@ class BertAttention(nn.Module):
                 elif key == 'o':
                     src = self.quantized[bit].output.dense
                 index = index.to(src.weight.device)
-                src_w = src.weight.index_select(dim, index).clone().detach()
+                # liux: clone()返回tensor的拷贝，对象不是同一个并且内存也不是同一块，修改其中一个不会对另外一个造成影响。
+                # 但是clone()返回的是中间节点，计算梯度的时候不会保存梯度值，而是直接叠加在原始tensor上，相当于对原始tensor计算梯度。
+                # detach()的作用是使得tensor从计算图中脱离出来，使得梯度不会从该tensor传递到下一个tensor。
+                # .clone().detach()相当于生成了一个新的tensor，这个新的tensor不仅内存和原tensor不共享，
+                # 其后续一系列的tensor操作所造成的梯度，也不会对原tensor造成影响。
+                src_w = src.weight.index_select(dim, index).clone().detach() # [768, 64] dim=1, [64, 768] dim=0
                 if dst.bias is not None:
-                    # src_b = src.bias[index].clone().detach()
                     if dim == 1:
                         src_b = src.bias.clone().detach()
                     else:
                         src_b = src.bias[index].clone().detach()
+                    # src_b = src.bias[index].clone().detach()
 
+                # liux: contiguous()函数将tensor的布局变成和行优先，如果不是行优先则新生成一块内存复制数据，如果已经是行优先则什么也不做。
+                # tensor在内存中是按照行优先的顺序展开成一维的数组在内存中连续存放(stride()最后一个数是1)，
+                # 但是经过transpose等操作后，数据在内存中不动，只是按照下标在内存中寻找数据的方式变了，即stride发生变化(stride()最后一个数不是1)。
+                # 对于view()等函数来说，规定其工作方式是在底层内存数据上使用指定的形状查看数据，不能动内存数据，
+                # 因此必须要求数据在底层的相邻关系是逻辑上行优先的相邻关系。
                 dst.weight.requires_grad = False
                 dst.weight.index_copy_(dim, index, src_w.contiguous())
                 dst.weight.requires_grad = True
 
+                # liux: TODO 对于attention中dense部分，其碎片是按照dim=1即输入维度划分的，输出维度不切分，因此bias也不应该切分，
+                # 但如果每加载一次碎片，就将该碎片完整的bias加载进来，那么最终模型存储的是最后一个碎片的位宽的bias。
+                # 因此此处对于dim=1的情况来说，默认不改变bias，使用自己的bias。
                 if dst.bias is not None:
                     dst.bias.requires_grad = False
-                    # dst.bias.index_copy_(0, index, src_b.contiguous())
-                    # dst.bias.copy_(src_b.contiguous())
+                    if dim==0:
+                        dst.bias.index_copy_(0, index, src_b.contiguous())
+                    # if dim==1:
+                    #     dst.bias.copy_(src_b.contiguous())
+                    # else:
+                    #     dst.bias.index_copy_(0, index, src_b.contiguous())
                     dst.bias.requires_grad = True
 
         #print("----before patching---")
@@ -700,9 +721,8 @@ class BertIntermediate(nn.Module):
         self.quantized = {}
 
     def patch_intermediate_shards(self, bits):
-        # print("patch intermediate shards..")
-        a = int(self.dense.in_features / self.dense.num_heads)
-        # print("Size:", a)
+        # liux: TODO 这里应该是out_features / num_heads
+        a = int(self.dense.out_features / self.dense.num_heads)
         def patch_one_shard(dst, bits, dim=0):
             for idx, bit in enumerate(bits):
                 if bit not in self.quantized.keys():
@@ -710,13 +730,14 @@ class BertIntermediate(nn.Module):
                 index = torch.arange(idx * a, (idx + 1) * a)
                 src = self.quantized[bit].dense
                 index = index.to(src.weight.device)
-                src_w = src.weight.index_select(dim, index).clone().detach()
+                src_w = src.weight.index_select(dim, index).clone().detach() #torch.Size([64, 768])???
                 if dst.bias is not None:
                     # src_b = src.bias[index].clone().detach()
                     if dim == 1:
                         src_b = src.bias.clone().detach()
                     else:
                         src_b = src.bias[index].clone().detach()
+                    # src_b = src.bias[index].clone().detach()
 
  
                    
@@ -726,7 +747,12 @@ class BertIntermediate(nn.Module):
 
                 if dst.bias is not None:
                     dst.bias.requires_grad = False
-                    # dst.bias.copy_(src_b.contiguous())
+                    # if dim==1:
+                    #     dst.bias.copy_(src_b.contiguous())
+                    # else:
+                    #     dst.bias.index_copy_(0, index, src_b.contiguous())
+                    if dim==0:
+                        dst.bias.index_copy_(0, index, src_b.contiguous())
                     dst.bias.requires_grad = True
 
         patch_one_shard(self.dense, bits)
@@ -767,9 +793,8 @@ class BertOutput(nn.Module):
         self.quantized = {}
 
     def patch_ffn_shards(self, bits):
-        # print("patch FFN shards..")
-        a = int(self.dense.out_features / self.dense.num_heads)
-        # print("Size:", a)
+        # liux: TODO 这里应该是in_features
+        a = int(self.dense.in_features / self.dense.num_heads)
         def patch_one_shard(dst, bits, dim=1):
             for idx, bit in enumerate(bits):
                 if bit not in self.quantized.keys():
@@ -799,6 +824,8 @@ class BertOutput(nn.Module):
                     dst.bias.requires_grad = False
                     # dst.bias.index_copy_(0, index, src_b.contiguous())
                     # dst.bias.copy_(src_b.contiguous())
+                    if dim == 0:
+                        dst.bias.index_copy_(0, index, src_b.contiguous())
                     dst.bias.requires_grad = True
 
         patch_one_shard(self.dense, bits)
@@ -882,7 +909,6 @@ class BertEncoder(nn.Module):
         #for i in np.random.choice(12, 6, replace=False):
         outliers = 0
         for i in range(len(self.layer)):
-            print("quantizing ", i)
             #gobo_quantize_one_layer(self.layer[i], 6)
             #kmeans_quantize_one_layer(self.layer[i], 3)
             print("------------------quantize Encoder %d-th Layer------------------" % i)
